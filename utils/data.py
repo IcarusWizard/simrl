@@ -29,9 +29,9 @@ class Collector:
             batchs.append(Batch(
                 obs=self.o,
                 next_obs=n_o,
-                reward=r,
+                reward=[r],
                 action=a,
-                done=float(d),
+                done=[float(d)],
             ))
 
             if d:

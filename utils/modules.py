@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 from torch.functional import F
-from torch.distributions import Normal
 from functools import partial
 
 from .dists import *
@@ -123,7 +122,11 @@ class DistributionWrapper(nn.Module):
             self.params['dim'] if not self.distribution_type == 'mix' else len(self.wrapper_list)
         )
 
-class OnehotActor(torch.nn.Module):
+class ShareModule(torch.nn.Module):
+    def get_weights(self):
+        return {k : v.cpu() for k, v in self.state_dict().items()}
+
+class OnehotActor(ShareModule):
     def __init__(self, state_dim, action_dim,
                  hidden_features=128,
                  hidden_layers=2,
@@ -153,7 +156,7 @@ class OnehotActor(torch.nn.Module):
         action = action.squeeze(0).numpy()
         return action
 
-class ContinuousActor(torch.nn.Module):
+class ContinuousActor(ShareModule):
     def __init__(self, state_dim, action_dim,
                  hidden_features=128,
                  hidden_layers=2,
@@ -183,7 +186,7 @@ class ContinuousActor(torch.nn.Module):
         action = action.squeeze(0).numpy()
         return action
 
-class Critic(torch.nn.Module):
+class Critic(ShareModule):
     def __init__(self, state_dim, action_dim=None,
                  hidden_features=128,
                  hidden_layers=2,

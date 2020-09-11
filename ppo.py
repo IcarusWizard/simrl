@@ -18,7 +18,7 @@ from utils.logger import Logger
 
 def get_ppo_config():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, default='CartPole-v0')
+    parser.add_argument('--env', type=str, default='CartPole-v1')
     parser.add_argument('--seed', type=int, default=None)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--gamma', type=float, default=0.99)
@@ -26,10 +26,10 @@ def get_ppo_config():
     parser.add_argument('--epsilon', type=float, default=0.2)
     parser.add_argument('--grad_clip', type=float, default=0.5)
     parser.add_argument('--epoch', type=int, default=50)
-    parser.add_argument('--step_per_epoch', type=int, default=2048)
-    parser.add_argument('--batch_split', type=int, default=8)
+    parser.add_argument('--step_per_epoch', type=int, default=4096)
+    parser.add_argument('--batch_split', type=int, default=16)
     parser.add_argument('--ppo_run', type=int, default=8)
-    parser.add_argument('--test-num', type=int, default=50)
+    parser.add_argument('--test-num', type=int, default=20)
     parser.add_argument('--log', type=str, default=None)
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -65,13 +65,13 @@ class PPO:
                                 hidden_features=self.config.get('actor_hidden_features', 128),
                                 hidden_layers=self.config.get('actor_hidden_layers', 1),
                                 hidden_activation=self.config.get('actor_activation', 'leakyrelu'),
-                                norm=self.config.get('actor_norm', None)).to(self.device)
+                                norm=self.config.get('actor_norm', None))
 
         self.critic = Critic(self.state_dim,
                              hidden_features=self.config.get('critic_hidden_features', 128),
                              hidden_layers=self.config.get('critic_hidden_layers', 1),
                              hidden_activation=self.config.get('critic_activation', 'leakyrelu'),
-                             norm=self.config.get('critic_norm', None)).to(self.device)
+                             norm=self.config.get('critic_norm', None))
 
         self.collector = Collector.remote(self.config, copy.deepcopy(self.actor))
         self.logger = Logger.remote(config, copy.deepcopy(self.actor))
@@ -83,7 +83,7 @@ class PPO:
 
     def run(self):
         for i in tqdm(range(self.config['epoch'])):
-            batchs_id = self.collector.collect_steps.remote(self.config["step_per_epoch"], self.actor.state_dict())
+            batchs_id = self.collector.collect_steps.remote(self.config["step_per_epoch"], self.actor.get_weights())
             batchs = ray.get(batchs_id)
 
             batchs.to_torch(dtype=torch.float32, device=self.device)
@@ -119,7 +119,14 @@ class PPO:
                                                             self.config['grad_clip'])       
                     self.optimizor.step()    
 
-            self.logger.test_and_log.remote(self.actor.state_dict())
+                    info = {
+                        "ratio" : ratio.mean().item(),
+                        "p_loss" : p_loss.item(),
+                        "v_loss" : v_loss.item(),
+                        "grad_norm" : grad_norm.item(),
+                    }
+
+            self.logger.test_and_log.remote(self.actor.get_weights(), info)
 
 if __name__ == '__main__':
     ray.init()
@@ -127,4 +134,3 @@ if __name__ == '__main__':
     setup_seed(config['seed'] or random.randint(0, 1000000))
     experiment = PPO(config)
     experiment.run()
-    ray.shutdown()

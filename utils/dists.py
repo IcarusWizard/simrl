@@ -1,9 +1,12 @@
 import torch
 from torch.functional import F
 import numpy as np
-from torch.distributions import Normal
 
 EPS = 1e-8
+
+class Normal(torch.distributions.Normal):
+    def mode(self):
+        return self.mean
 
 class Onehot:
     """Differentiable Onehot Distribution"""
@@ -16,7 +19,20 @@ class Onehot:
         self.p = torch.softmax(logits, dim=-1)
         self.prior = torch.distributions.Categorical(logits=logits)
 
+    def _index2onehot(self, index):
+        shape = index.shape
+        index = index.view(-1)
+        sample = torch.zeros_like(self.logits)
+        sample = sample.view(-1, sample.shape[-1])
+        sample[np.arange(index.shape[0]), index] = 1
+        sample = sample.view(*shape, sample.shape[-1])
+        return sample        
+
     def log_prob(self, x):
+        """
+        :return: log probability of one hot sample
+
+        """
         index = torch.argmax(x, dim=-1)
         log_prob = self.prior.log_prob(index)
         return log_prob.unsqueeze(-1)
@@ -24,16 +40,14 @@ class Onehot:
     @property
     def mode(self):
         index = torch.argmax(self.logits, dim=-1)
-        sample = torch.zeros_like(self.logits)
-        sample[np.arange(index.shape[0]), index] = 1
+        sample = self._index2onehot(index)
         return sample + self.p - self.p.detach()
 
     def sample(self, num=torch.Size()):
         # TODO: implement multi-sample mode
         assert len(num) == 0, "currently onehot distribution only support single sample mode"
         index = self.prior.sample(num)
-        sample = torch.zeros_like(self.logits)
-        sample[np.arange(index.shape[0]), index] = 1
+        sample = self._index2onehot(index)
         return sample
 
     def rsample(self, num=torch.Size()):
