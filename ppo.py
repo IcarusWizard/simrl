@@ -5,8 +5,8 @@ import torch
 import ray
 import time
 import copy
-import numpy as np
 
+import numpy as np
 from tqdm import tqdm
 from tianshou.data import Batch
 
@@ -24,12 +24,15 @@ def get_ppo_config():
     parser.add_argument('--gamma', type=float, default=0.99)
     parser.add_argument('--lambda', type=float, default=0.95)
     parser.add_argument('--epsilon', type=float, default=0.2)
+    parser.add_argument('--entropy_coef', type=float, default=0)
     parser.add_argument('--grad_clip', type=float, default=0.5)
     parser.add_argument('--epoch', type=int, default=50)
-    parser.add_argument('--step_per_epoch', type=int, default=4096)
-    parser.add_argument('--batch_split', type=int, default=16)
-    parser.add_argument('--ppo_run', type=int, default=8)
+    parser.add_argument('--step_per_epoch', type=int, default=2048)
+    parser.add_argument('--batch_split', type=int, default=8)
+    parser.add_argument('--ppo_run', type=int, default=4)
     parser.add_argument('--test-num', type=int, default=20)
+    parser.add_argument('--test_frequency', type=int, default=5)
+    parser.add_argument('--log_video', action='store_true')
     parser.add_argument('--log', type=str, default=None)
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -49,6 +52,7 @@ def get_ppo_config():
 class PPO:
     def __init__(self, config):
         self.config = config
+        setup_seed(self.config['seed'])
         self.env = make_env(config)
         self.state_dim = self.env.observation_space.shape[0]
         self.action_dim = self.env.action_space.shape[0]
@@ -88,6 +92,7 @@ class PPO:
 
             batchs.to_torch(dtype=torch.float32, device=self.device)
 
+            # normalize rewards
             reward_std = batchs.reward.std()
             if not reward_std == 0:
                 batchs.reward = (batchs.reward - batchs.reward.mean()) / reward_std
@@ -111,7 +116,9 @@ class PPO:
                     value = self.critic(batch.obs)
                     v_loss = torch.mean((value - batch.ret) ** 2)
 
-                    loss = p_loss + v_loss
+                    e_loss = action_dist.entropy().mean() * self.config['entropy_coef']
+
+                    loss = p_loss + v_loss + e_loss
 
                     self.optimizor.zero_grad()
                     loss.backward()
@@ -123,14 +130,15 @@ class PPO:
                         "ratio" : ratio.mean().item(),
                         "p_loss" : p_loss.item(),
                         "v_loss" : v_loss.item(),
+                        "e_loss" : e_loss.item(),
                         "grad_norm" : grad_norm.item(),
                     }
 
-            self.logger.test_and_log.remote(self.actor.get_weights(), info)
+            self.logger.test_and_log.remote(self.actor.get_weights() if i % self.config['test_frequency'] == 0 else None, info)
 
 if __name__ == '__main__':
     ray.init()
     config = get_ppo_config()
-    setup_seed(config['seed'] or random.randint(0, 1000000))
+    config['seed'] = config['seed'] or random.randint(0, 1000000)
     experiment = PPO(config)
     experiment.run()

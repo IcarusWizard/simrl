@@ -2,4 +2,6 @@
 ## Supported Algorithm
 - [x] PPO
 - [ ] DDPG
-- [ ] QDN
+- [ ] DQN
+- [ ] A3C
+- [ ] SAC

@@ -5,6 +5,7 @@ import numpy as np
 EPS = 1e-8
 
 class Normal(torch.distributions.Normal):
+    @property
     def mode(self):
         return self.mean
 
