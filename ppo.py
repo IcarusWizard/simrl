@@ -10,11 +10,11 @@ import numpy as np
 from tqdm import tqdm
 from tianshou.data import Batch
 
-from utils import setup_seed, compute_gae
-from utils.modules import OnehotActor, ContinuousActor, Critic
-from utils.envs import make_env
-from utils.data import Collector
-from utils.logger import Logger
+from simrl.utils import setup_seed, compute_gae
+from simrl.utils.modules import OnehotActor, ContinuousActor, Critic
+from simrl.utils.envs import make_env
+from simrl.utils.data import Collector
+from simrl.utils.logger import Logger
 
 def get_ppo_config():
     parser = argparse.ArgumentParser()

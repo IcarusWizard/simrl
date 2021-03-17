@@ -1,4 +1,6 @@
-# Demos of RL Algorithm in PyTorch
+# Simrl
+Simple Implementations of RL Algorithm in PyTorch.
+
 ## Supported Algorithm
 - [x] PPO
 - [ ] DDPG

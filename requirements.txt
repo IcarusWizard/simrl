@@ -1,9 +1,0 @@
-torch
-torchvision
-tensorboard
-numpy
-matplotlib
-tqdm
-ray
-gym
-tianshou
