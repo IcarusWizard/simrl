@@ -6,4 +6,4 @@ Simple Implementations of RL Algorithm in PyTorch.
 - [ ] DDPG
 - [ ] DQN
 - [ ] A3C
-- [ ] SAC
+- [x] SAC
