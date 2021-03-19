@@ -14,6 +14,7 @@ setup(
     description="Simple Implementations of RL Algorithm in PyTorch",
     url="https://github.com/IcarusWizard/rldemos",
     version=__version__,
+    py_modules=['simrl'],
     author="Icarus",
     author_email="wizardicarus@gmail.com",
     python_requires=">=3.7",
@@ -26,6 +27,7 @@ setup(
         "matplotlib",
         "tqdm",
         "tianshou",
+        "pyro-ppl"
     ],
     
 )

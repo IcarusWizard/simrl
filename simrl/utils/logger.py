@@ -1,6 +1,5 @@
-import ray
 import os
-import time
+import ray
 import torch
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
@@ -9,7 +8,7 @@ from .envs import make_env
 
 @ray.remote
 class Logger:
-    def __init__(self, config, actor):
+    def __init__(self, config, actor, algo_name):
         self.config = config
         self.actor = actor
         self.count = 0
@@ -17,7 +16,7 @@ class Logger:
         self.env = make_env(config)
 
         log_name = self.config['log'] or str(self.config['seed'])
-        self.log_dir = os.path.join('logs', self.config['env'], 'ppo', log_name)
+        self.log_dir = os.path.join('logs', self.config['env'], algo_name, log_name)
         self.writer = SummaryWriter(self.log_dir)
 
     def test_and_log(self, actor_state_dict=None, info={}):

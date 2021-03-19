@@ -1,154 +1,148 @@
+'''This file is extended from pyro.distributions to define distributions used in Revive.'''
+
 import torch
 from torch.functional import F
-import numpy as np
+from torch.distributions import constraints
 
-EPS = 1e-8
+import pyro
+from pyro.distributions.torch_distribution import TorchDistributionMixin
+from pyro.distributions.kl import register_kl, kl_divergence
 
-class Normal(torch.distributions.Normal):
+class DistributionMixin:
+    '''Define revive distribution API'''
+
+    @property
+    def mode(self,):
+        '''return the most likely sample of the distributions'''
+        raise NotImplementedError 
+
+    @property
+    def std(self):
+        '''return the standard deviation of the distributions'''
+        raise NotImplementedError
+
+    def sample_with_logprob(self, sample_shape=torch.Size()):
+        sample = self.rsample(sample_shape) if self.has_rsample else self.sample(sample_shape)
+        return sample, self.log_prob(sample)
+
+class Distribution(pyro.distributions.TorchDistribution, DistributionMixin):
+    pass
+
+class DiagnalNormal(Distribution):
+    def __init__(self, loc, scale, validate_args=None):
+        self.base_dist = pyro.distributions.Normal(loc, scale, validate_args)
+        batch_shape = torch.Size(loc.shape[:-1])
+        event_shape = torch.Size([loc.shape[-1]])
+        super(DiagnalNormal, self).__init__(batch_shape, event_shape, validate_args)
+
+    def sample(self, sample_shape=torch.Size()):
+        return self.base_dist.sample(sample_shape)
+
+    def rsample(self, sample_shape=torch.Size()):
+        return self.base_dist.rsample(sample_shape)
+
+    def log_prob(self, sample):
+        log_prob = self.base_dist.log_prob(sample)
+        return torch.sum(log_prob, dim=-1)
+
+    def entropy(self):
+        entropy = self.base_dist.entropy()
+        return torch.sum(entropy, dim=-1)
+
+    def shift(self, mu_shift):
+        '''shift the distribution, useful in local mode transition'''
+        return DiagnalNormal(self.base_dist.loc + mu_shift, self.base_dist.scale)
+
     @property
     def mode(self):
-        return self.mean
+        return self.base_dist.mean
 
-class Onehot:
+    @property
+    def std(self):
+        return self.base_dist.scale
+
+class TransformedDistribution(torch.distributions.TransformedDistribution):
+    @property
+    def mode(self):
+        x = self.base_dist.mode
+        for transform in self.transforms:
+            x = transform(x)
+        return x
+
+    @property
+    def std(self):
+        raise NotImplementedError # TODO: fix this!
+    
+    def entropy(self, num=torch.Size([100])):
+        # use samples to estimate entropy
+        samples = self.rsample(num)
+        log_prob = self.log_prob(samples)
+        entropy = - torch.mean(log_prob, dim=0)
+        return entropy
+
+class Onehot(torch.distributions.OneHotCategorical, TorchDistributionMixin, DistributionMixin):
     """Differentiable Onehot Distribution"""
+
+    has_rsample = True
+    support = constraints.real
 
     def __init__(self, logits):
         """logits -> tensor[*, N]"""
-        super().__init__()
-        self.n = logits.shape[-1]
-        self.logits = logits
-        self.p = torch.softmax(logits, dim=-1)
-        self.prior = torch.distributions.Categorical(logits=logits)
+        super(Onehot, self).__init__(logits=logits)
 
-    def _index2onehot(self, index):
-        shape = index.shape
-        index = index.view(-1)
-        sample = torch.zeros_like(self.logits)
-        sample = sample.view(-1, sample.shape[-1])
-        sample[np.arange(index.shape[0]), index] = 1
-        sample = sample.view(*shape, sample.shape[-1])
-        return sample        
-
-    def log_prob(self, x):
-        """
-        :return: log probability of one hot sample
-
-        """
-        index = torch.argmax(x, dim=-1)
-        log_prob = self.prior.log_prob(index)
-        return log_prob.unsqueeze(-1)
+    def rsample(self, sample_shape=torch.Size()):
+        # Implement straight-through estimator
+        # Bengio et.al. Estimating or Propagating Gradients Through Stochastic Neurons for Conditional Computation 
+        sample = self.sample(sample_shape)
+        return sample + self.probs - self.probs.detach()
     
     @property
     def mode(self):
         index = torch.argmax(self.logits, dim=-1)
-        sample = self._index2onehot(index)
-        return sample + self.p - self.p.detach()
+        sample = F.one_hot(index, self.event_shape[0])
+        return sample + self.probs - self.probs.detach()
 
-    def sample(self, num=torch.Size()):
-        # TODO: implement multi-sample mode
-        assert len(num) == 0, "currently onehot distribution only support single sample mode"
-        index = self.prior.sample(num)
-        sample = self._index2onehot(index)
-        return sample
+    @property
+    def std(self):
+        return self.variance
 
-    def rsample(self, num=torch.Size()):
-        # Implement straight-through estimator
-        # Bengio et.al. Estimating or Propagating Gradients Through Stochastic Neurons for Conditional Computation 
-        sample = self.sample(num)
-        return sample + self.p - self.p.detach()
-
-    def sample_with_logprob(self, num=torch.Size()):
-        x = self.rsample(num)
-        return x, self.log_prob(x)
-    
-    def entropy(self):
-        entropy = self.prior.entropy()
-        return entropy.unsqueeze(-1)
-
-class GaussianMixture:
-
-    def __init__(self, logits, mus, stds):
-        """
-            logits  ->  tensor[*, M]
-            mus     ->  tensor[*, M, N]
-            stds    ->  tensor[*, M, N]
-            * can be any shape, M is number of mixture, N is dim of each gauss
-        """
-        super().__init__()
-        self.prior = Onehot(logits)
-        self.mus = mus
-        self.stds = stds
-        self.dists = [Normal(mus.select(-2, i), stds.select(-2, i)) for i in range(self.prior.n)]
-
-    def log_prob(self, x):
-        log_probs = torch.stack([dist.log_prob(x) for dist in self.dists], dim=-2)
-        return torch.log((self.prior.p.unsqueeze(-1) * torch.exp(log_probs)).sum(-2))
-    
+class GaussianMixture(pyro.distributions.MixtureOfDiagNormals, DistributionMixin):
     @property
     def mode(self):
-        raise NotImplementedError()
+        # NOTE: this is only an approximate mode
+        which = self.categorical.logits.max(dim=-1)[1]
+        which = which.unsqueeze(dim=-1).unsqueeze(dim=-1)
+        which_expand = which.expand(tuple(which.shape[:-1] + (self.locs.shape[-1],)))
+        loc = torch.gather(self.locs, -2, which_expand).squeeze(-2)
+        return loc
 
-    def sample(self, num=torch.Size()):
-        # TODO: implement multi-sample mode
-        assert len(num) == 0, "currently GaussianMixture distribution only support single sample mode"
-        onehot = self.prior.sample(num) # [*, M]
-        samples = torch.stack([dist.sample(num) for dist in self.dists], dim=-2) # [*, M, N]
-        sample = (samples * onehot.unsqueeze(-1)).sum(-2)
-        return sample
+    @property
+    def std(self):
+        p = self.categorical.probs
+        return torch.sum(self.coord_scale * p.unsqueeze(-1), dim=-2)
 
-    def rsample(self, num=torch.Size()):
-        # TODO: implement multi-sample mode
-        assert len(num) == 0, "currently GaussianMixture distribution only support single sample mode"
-        onehot = self.prior.rsample(num) # [*, M]
-        samples = torch.stack([dist.rsample(num) for dist in self.dists], dim=-2) # [*, M, N]
-        sample = (samples * onehot.unsqueeze(-1)).sum(-2)
-        return sample
+    def shift(self, mu_shift):
+        '''shift the distribution, useful in local mode transition'''
+        return GaussianMixture(self.locs + mu_shift.unsqueeze(dim=-2), self.coord_scale, self.component_logits)
 
-    def sample_with_logprob(self, num=torch.Size()):
-        x = self.rsample(num)
-        return x, self.log_prob(x)
-    
     def entropy(self):
-        entropys = torch.stack([dist.entropy() for dist in self.dists], dim=-2)
-        return (entropys * self.prior.p.unsqueeze(-1)).sum(-2)
+        p = self.categorical.probs
+        normal = DiagnalNormal(self.locs, self.coord_scale)
+        entropy = normal.entropy()
+        return torch.sum(p * entropy, dim=-1)
 
-class MixDistribution:
-    """Collection of different distributions"""
+class MixDistribution(Distribution):
+    """Collection of multiple distributions"""
     
     def __init__(self, dists):
         super().__init__()
+        assert len(set([dist.batch_shape for dist in dists])) == 1, "the batch shape of all distributions should be equal"
+        assert len(set([len(dist.event_shape) == 1 for dist in dists])) == 1, "the event shape of all distributions should have length 1"
         self.dists = dists
-
-        self.sizes = []
-        for dist in self.dists:
-            if type(dist) == Normal:
-                self.sizes.append(dist.mean.shape[-1])
-            elif type(dist) == Onehot:
-                self.sizes.append(dist.n)
-            elif type(dist) == GaussianMixture:
-                self.sizes.append(dist.mus.shape[-1])
-            else:
-                raise NotImplementedError(f"distribution type {type(dist)} is not support!")
-
-    def log_prob(self, x):
-        if type(x) == list:
-            return [self.dists[i].log_prob(x[i]) for i in range(len(x))]
-        # manually split the tensor
-        x = torch.split(x, self.sizes, dim=-1)
-        log_probs = [self.dists[i].log_prob(x[i]) for i in range(len(x))]
-        return torch.cat(log_probs, dim=-1)
-
-    @property
-    def mode(self):
-        def find_mode(dist):
-            if type(dist) == Normal:
-                return dist.mean
-            elif type(dist) == Onehot:
-                return dist.mode 
-            else:
-                raise NotImplementedError(f"distribution type {type(dist)} is not support!")         
-        modes = list(map(find_mode, self.dists))
-        return torch.cat(modes, dim=-1)
+        self.sizes = [dist.event_shape[0] for dist in self.dists]
+        batch_shape = self.dists[0].batch_shape
+        event_shape = torch.Size((sum(self.sizes),))
+        super(MixDistribution, self).__init__(batch_shape, event_shape)
 
     def sample(self, num=torch.Size()):
         samples = [dist.sample(num) for dist in self.dists]
@@ -158,10 +152,121 @@ class MixDistribution:
         samples = [dist.rsample(num) for dist in self.dists]
         return torch.cat(samples, dim=-1)
 
-    def sample_with_logprob(self, num=torch.Size()):
-        x = self.rsample(num)
-        return x, self.log_prob(x)
-    
     def entropy(self):
-        entropys = [dist.entropy() for dist in self.dists]
-        return torch.cat(entropys, dim=-1)
+        return sum([dist.entropy() for dist in self.dists])  
+
+    def log_prob(self, x):
+        if type(x) == list:
+            return [self.dists[i].log_prob(x[i]) for i in range(len(x))]
+        # manually split the tensor
+        x = torch.split(x, self.sizes, dim=-1)
+        return sum([self.dists[i].log_prob(x[i]) for i in range(len(x))])
+
+    @property
+    def mode(self):
+        modes = [dist.mode for dist in self.dists]
+        return torch.cat(modes, dim=-1)
+
+    @property
+    def std(self):
+        stds = [dist.std for dist in self.dists]
+        return torch.cat(stds, dim=-1)
+
+    def shift(self, mu_shift):
+        '''shift the distribution, useful in local mode transition'''
+        assert all([type(dist) in [DiagnalNormal, GaussianMixture] for dist in self.dists]), \
+            "all the distributions should have method `shift`"
+        return MixDistribution([dist.shift(mu_shift) for dist in self.dists])
+
+@register_kl(DiagnalNormal, DiagnalNormal)
+def _kl_diagnalnormal_diagnalnormal(p : DiagnalNormal, q : DiagnalNormal):
+    kl = kl_divergence(p.base_dist, q.base_dist)
+    kl = torch.sum(kl, dim=-1)
+    return kl
+
+@register_kl(Onehot, Onehot)
+def _kl_onehot_onehot(p : Onehot, q : Onehot):
+    kl = (p.probs * (torch.log(p.probs) - torch.log(q.probs))).sum(dim=-1)
+    return kl
+
+@register_kl(GaussianMixture, GaussianMixture)
+def _kl_gmm_gmm(p : GaussianMixture, q : GaussianMixture):
+    samples = p.rsample()
+    log_p = p.log_prob(samples)
+    log_q = q.log_prob(samples)
+    return log_p - log_q
+
+@register_kl(MixDistribution, MixDistribution)
+def _kl_mix_mix(p : MixDistribution, q : MixDistribution):
+    assert all([type(_p) == type(_q) for _p, _q in zip(p.dists, q.dists)])
+    kl = 0
+    for _p, _q in zip(p.dists, q.dists):
+        kl = kl + kl_divergence(_p, _q)
+    return kl
+     
+if __name__ == '__main__':
+    print('-' * 50)
+    onehot = Onehot(torch.rand(2, 10, requires_grad=True))
+    print('onehot batch shape', onehot.batch_shape)
+    print('onehot event shape', onehot.event_shape)
+    print('onehot sample', onehot.sample())
+    print('onehot rsample', onehot.rsample())
+    print('onehot log prob', onehot.sample_with_logprob()[1])
+    print('onehot mode', onehot.mode)
+    print('onehot std', onehot.std)
+    print('onehot entropy', onehot.entropy())
+    _onehot = Onehot(torch.rand(2, 10, requires_grad=True))
+    print('onehot kl', kl_divergence(onehot, _onehot))
+
+    print('-' * 50)
+    mixture = GaussianMixture(
+        torch.rand(2, 6, 4, requires_grad=True), 
+        torch.rand(2, 6, 4, requires_grad=True),
+        torch.rand(2, 6, requires_grad=True), 
+    )
+    print('gmm batch shape', mixture.batch_shape)
+    print('gmm event shape', mixture.event_shape)
+    print('gmm sample', mixture.sample())
+    print('gmm rsample', mixture.rsample())
+    print('gmm log prob', mixture.sample_with_logprob()[1])
+    print('gmm mode', mixture.mode)
+    print('gmm std', mixture.std)
+    print('gmm entropy', mixture.entropy())
+    _mixture = GaussianMixture(
+        torch.rand(2, 6, 4, requires_grad=True), 
+        torch.rand(2, 6, 4, requires_grad=True),
+        torch.rand(2, 6, requires_grad=True), 
+    )
+    print('gmm kl', kl_divergence(mixture, _mixture))
+
+    print('-' * 50)
+    normal = DiagnalNormal(
+        torch.rand(2, 5, requires_grad=True), 
+        torch.rand(2, 5, requires_grad=True)
+    )
+    print('normal batch shape', normal.batch_shape)
+    print('normal event shape', normal.event_shape)
+    print('normal sample', normal.sample())
+    print('normal rsample', normal.rsample())
+    print('normal log prob', normal.sample_with_logprob()[1])
+    print('normal mode', normal.mode)
+    print('normal std', normal.std)
+    print('normal entropy', normal.entropy())
+    _normal = DiagnalNormal(
+        torch.rand(2, 5, requires_grad=True), 
+        torch.rand(2, 5, requires_grad=True)
+    )
+    print('normal kl', kl_divergence(normal, _normal))
+
+    print('-' * 50)
+    mix = MixDistribution([onehot, mixture, normal])
+    print('mix batch shape', mix.batch_shape)
+    print('mix event shape', mix.event_shape)
+    print('mix sample', mix.sample())
+    print('mix rsample', mix.rsample())
+    print('mix log prob', mix.sample_with_logprob()[1])
+    print('mix mode', mix.mode)
+    print('mix std', mix.std)
+    print('mix entropy', mix.entropy())
+    _mix = MixDistribution([_onehot, _mixture, _normal])
+    print('mix kl', kl_divergence(mix, _mix))

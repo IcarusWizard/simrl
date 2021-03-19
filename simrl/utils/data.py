@@ -1,4 +1,5 @@
 import ray
+import torch
 import numpy as np
 from tianshou.data import Batch
 
@@ -49,3 +50,31 @@ class Collector:
         print('state dim:', self.state_dim)
         print('action dim:', self.action_dim)
         
+
+class ReplayBuffer:
+    """
+    A simple FIFO experience replay buffer.
+    """
+    def __init__(self, buffer_size : int):
+        self.data = None
+        self.buffer_size = int(buffer_size)
+
+    def put(self, batch_data : Batch):
+        batch_data.to_torch(device='cpu')
+
+        if self.data is None:
+            self.data = batch_data
+        else:
+            self.data.cat_(batch_data)
+        
+        if len(self) > self.buffer_size:
+            self.data = self.data[len(self) - self.buffer_size : ]
+
+    def __len__(self):
+        if self.data is None: return 0
+        return self.data.shape[0]
+
+    def sample(self, batch_size):
+        assert len(self) > 0, 'Cannot sample from an empty buffer!'
+        indexes = np.random.randint(0, len(self), size=(batch_size))
+        return self.data[indexes]
