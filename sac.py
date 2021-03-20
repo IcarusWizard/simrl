@@ -97,7 +97,7 @@ class SAC:
         self.q1_target = deepcopy(self.q1)
         self.q2_target = deepcopy(self.q2) 
 
-        self.log_alpha = torch.nn.Parameter(torch.zeros(1) + np.log(self.config['base_alpha'])).float().to(self.device)
+        self.log_alpha = torch.nn.Parameter(torch.zeros(1, device=self.device) + np.log(self.config['base_alpha'])).float()
         if self.config['auto_alpha']:
             if self.config['env_type'] == 'discrete':
                 self.target_entropy = np.log(self.action_dim)
