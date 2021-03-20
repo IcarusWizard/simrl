@@ -1,5 +1,4 @@
 import ray
-import copy
 import torch
 import random
 import argparse
@@ -8,9 +7,9 @@ from tqdm import tqdm
 from copy import deepcopy
 
 from simrl.utils import setup_seed, soft_critic_update
-from simrl.utils.modules import OnehotActor, ContinuousActor, Critic
+from simrl.utils.modules import OnehotActor, BoundedContinuousActor, Critic
 from simrl.utils.envs import make_env
-from simrl.utils.data import Collector, ReplayBuffer
+from simrl.utils.data import CollectorServer, ReplayBuffer
 from simrl.utils.logger import Logger
 
 class SAC:
@@ -25,7 +24,9 @@ class SAC:
         parser.add_argument('--gamma', type=float, default=0.99)
         parser.add_argument('--tau', type=float, default=0.005)
         parser.add_argument('--epoch', type=int, default=100)
-        parser.add_argument('--step_per_epoch', type=int, default=1000)
+        parser.add_argument('--data_collection_per_epoch', type=int, default=10000)
+        parser.add_argument('--num_collectors', type=int, default=4)
+        parser.add_argument('--training_step_per_epoch', type=int, default=1000)
         parser.add_argument('--test-num', type=int, default=20)
         parser.add_argument('--base_alpha', type=float, default=0.2)
         parser.add_argument('--auto_alpha', type=lambda x: [False, True][int(x)], default=True)
@@ -56,17 +57,21 @@ class SAC:
         self.device = self.config['device']
 
         if self.config['env_type'] == 'discrete':
-            actor_class = OnehotActor
+            self.actor = OnehotActor(self.state_dim, self.action_dim,
+                                     hidden_features=self.config.get('actor_hidden_features', 128),
+                                     hidden_layers=self.config.get('actor_hidden_layers', 1),
+                                     hidden_activation=self.config.get('actor_activation', 'leakyrelu'),
+                                     norm=self.config.get('actor_norm', None))
         elif self.config['env_type'] == 'continuous':
-            actor_class = ContinuousActor
+            self.actor = BoundedContinuousActor(self.state_dim, self.action_dim,
+                                                hidden_features=self.config.get('actor_hidden_features', 128),
+                                                hidden_layers=self.config.get('actor_hidden_layers', 1),
+                                                hidden_activation=self.config.get('actor_activation', 'leakyrelu'),
+                                                norm=self.config.get('actor_norm', None),
+                                                min_action=self.config.get('min_action', -1),
+                                                max_action=self.config.get('max_action', 1))            
         else:
             raise ValueError('{} is not supported!'.format(self.config['env_type']))
-        
-        self.actor = actor_class(self.state_dim, self.action_dim,
-                                 hidden_features=self.config.get('actor_hidden_features', 128),
-                                 hidden_layers=self.config.get('actor_hidden_layers', 1),
-                                 hidden_activation=self.config.get('actor_activation', 'leakyrelu'),
-                                 norm=self.config.get('actor_norm', None))
 
         self.q1 = Critic(self.state_dim,
                          action_dim=self.action_dim,
@@ -82,9 +87,9 @@ class SAC:
                          hidden_activation=self.config.get('critic_activation', 'leakyrelu'),
                          norm=self.config.get('critic_norm', None))
 
-        self.buffer = ReplayBuffer(self.config['buffer_size'])
-        self.collector = Collector.remote(self.config, copy.deepcopy(self.actor))
-        self.logger = Logger.remote(config, copy.deepcopy(self.actor), 'sac')
+        self.buffer = ray.remote(ReplayBuffer).remote(self.config['buffer_size'])
+        self.collector = CollectorServer.remote(self.config, deepcopy(self.actor), self.buffer, self.config['num_collectors'])
+        self.logger = Logger.remote(config, deepcopy(self.actor), 'sac')
 
         self.actor = self.actor.to(self.device)
         self.q1 = self.q1.to(self.device)
@@ -104,19 +109,12 @@ class SAC:
         self.critic_optimizor = torch.optim.Adam([*self.q1.parameters(), *self.q2.parameters()], lr=config['lr'])
 
     def run(self):
-        print('Collecting Initial Trajectory to fill the buffer ...')
-        batchs_id = self.collector.collect_steps.remote(50000, self.actor.get_weights())
-        batchs = ray.get(batchs_id)
-        self.buffer.put(batchs)
-        print('Prefetching Completes!')
-
         for i in tqdm(range(self.config['epoch'])):
-            for _ in range(self.config['step_per_epoch']):
-                batchs_id = self.collector.collect_steps.remote(1, self.actor.get_weights())
-                batchs = ray.get(batchs_id)
-                self.buffer.put(batchs)
-
-                batchs = self.buffer.sample(self.config['batch_size'])
+            batchs_id = self.collector.collect_steps.remote(self.config['data_collection_per_epoch'], self.actor.get_weights())
+            batchs = ray.get(batchs_id)
+        
+            for _ in tqdm(range(self.config['training_step_per_epoch'])):
+                batchs = ray.get(self.buffer.sample.remote(self.config['batch_size']))
 
                 batchs.to_torch(dtype=torch.float32, device=self.device)
 

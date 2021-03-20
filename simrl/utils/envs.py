@@ -1,7 +1,7 @@
 import gym
 import numpy as np
 
-def make_env(config):
+def make_env(config) -> gym.Env:
     env_name = config['env']
     env = gym.make(env_name)
 
@@ -10,10 +10,12 @@ def make_env(config):
         config['env_type'] = 'discrete'
     else:
         config['env_type'] = 'continuous'
+        config['max_action'] = env.action_space.high
+        config['min_action'] = env.action_space.low
 
     return env
 
-class ActionRepeat:
+class ActionRepeat(gym.Env):
 
   def __init__(self, env, amount):
     self._env = env
@@ -32,7 +34,7 @@ class ActionRepeat:
       current_step += 1
     return obs, total_reward, done, info
 
-class OneHotAction:
+class OneHotAction(gym.Env):
 
   def __init__(self, env):
     assert isinstance(env.action_space, gym.spaces.Discrete)

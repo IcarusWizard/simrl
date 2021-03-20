@@ -1,5 +1,6 @@
 '''This file is extended from pyro.distributions to define distributions used in Revive.'''
 
+import math
 import torch
 from torch.functional import F
 from torch.distributions import constraints
@@ -29,6 +30,8 @@ class Distribution(pyro.distributions.TorchDistribution, DistributionMixin):
     pass
 
 class DiagnalNormal(Distribution):
+    arg_constraints = {}
+    
     def __init__(self, loc, scale, validate_args=None):
         self.base_dist = pyro.distributions.Normal(loc, scale, validate_args)
         batch_shape = torch.Size(loc.shape[:-1])
@@ -79,6 +82,29 @@ class TransformedDistribution(torch.distributions.TransformedDistribution):
         log_prob = self.log_prob(samples)
         entropy = - torch.mean(log_prob, dim=0)
         return entropy
+
+class SafeTanhTransform(torch.distributions.Transform):
+    domain = constraints.real
+    codomain = constraints.interval(-1.0, 1.0)
+    bijective = True
+    sign = +1
+
+    def __eq__(self, other):
+        return isinstance(other, SafeTanhTransform)
+
+    def _call(self, x):
+        return x.tanh()
+
+    def _inverse(self, y):
+        # We do not clamp to the boundary here as it may degrade the performance of certain algorithms.
+        # one should use `cache_size=1` instead
+        y = torch.clamp(y, -0.99999997, 0.99999997)
+        return torch.atanh(y)
+
+    def log_abs_det_jacobian(self, x, y):
+        # We use a formula that is more numerically stable, see details in the following link
+        # https://github.com/tensorflow/probability/blob/master/tensorflow_probability/python/bijectors/tanh.py#L69-L80
+        return 2. * (math.log(2.) - x - F.softplus(-2. * x))
 
 class Onehot(torch.distributions.OneHotCategorical, TorchDistributionMixin, DistributionMixin):
     """Differentiable Onehot Distribution"""

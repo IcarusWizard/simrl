@@ -1,8 +1,7 @@
 import torch
 from torch import nn
-from torch.functional import F
 
-from .dists import *
+from simrl.utils.dists import *
 from simrl.utils.general import soft_clamp
 
 ACTIVATION_CREATERS = {
@@ -66,7 +65,7 @@ class MLP(nn.Module):
 
 class DistributionWrapper(nn.Module):
     r"""wrap output of Module to distribution"""
-    BASE_TYPES = ['normal', 'gmm', 'onehot']
+    BASE_TYPES = ['normal', 'tanhnormal', 'gmm', 'onehot']
     SUPPORTED_TYPES = BASE_TYPES + ['mix']
 
     def __init__(self, distribution_type='normal', **params):
@@ -86,6 +85,13 @@ class DistributionWrapper(nn.Module):
             self.min_logstd = nn.Parameter(torch.ones(self.params['mixture'], self.params['dim']) * -10, requires_grad=True)            
             if not self.params.get('conditioned_std', True):
                 self.logstd = nn.Parameter(torch.zeros(self.params['mixture'], self.params['dim']), requires_grad=True)
+        elif self.distribution_type == 'tanhnormal':
+            self.max_logstd = nn.Parameter(torch.ones(self.params['dim']) * 0, requires_grad=True)
+            self.min_logstd = nn.Parameter(torch.ones(self.params['dim']) * -10, requires_grad=True)
+            if not self.params.get('conditioned_std', True):
+                self.logstd = nn.Parameter(torch.zeros(self.params['dim']), requires_grad=True)
+            self.register_buffer('loc', torch.as_tensor((params['max'] + params['min']) / 2))
+            self.register_buffer('scale', torch.as_tensor((params['max'] - params['min']) / 2))
         elif self.distribution_type == 'mix':
             assert 'dist_config' in self.params.keys(), "You need to provide `dist_config` for Mix distribution"
 
@@ -125,6 +131,19 @@ class DistributionWrapper(nn.Module):
                 logstds = self.logstd
             stds = torch.exp(soft_clamp(logstds, self.min_logstd, self.max_logstd))
             return GaussianMixture(mus, stds, logits)
+        elif self.distribution_type == 'tanhnormal':
+            if self.params.get('conditioned_std', True):
+                mu, logstd = torch.chunk(x, 2, dim=-1)
+            else:
+                mu, logstd = x, self.logstd
+            mu = 5 * torch.tanh(mu / 5)
+            std = torch.exp(soft_clamp(logstd, self.min_logstd, self.max_logstd))
+            dist = DiagnalNormal(mu, std)
+            transforms = [
+                SafeTanhTransform(cache_size=1),
+                torch.distributions.transforms.AffineTransform(loc=self.loc, scale=self.scale)
+            ]
+            return TransformedDistribution(dist, transforms)
         elif self.distribution_type == 'onehot':
             return Onehot(10 * torch.tanh(x / 10)) # stabilize gradients
         elif self.distribution_type == 'mix':
@@ -141,16 +160,18 @@ class DistributionWrapper(nn.Module):
         )
 
 class ShareModule(torch.nn.Module):
+    """Module with the ablity to export its weights"""
     def get_weights(self):
         return {k : v.cpu() for k, v in self.state_dict().items()}
 
 class OnehotActor(ShareModule):
+    """Actor in discrete space (output onehot vectors)"""
     def __init__(self, state_dim, action_dim,
                  hidden_features=128,
                  hidden_layers=2,
                  norm=None,
                  hidden_activation='leakyrelu',
-                 ):
+                 *args, **kwargs):
         super().__init__()
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -175,19 +196,53 @@ class OnehotActor(ShareModule):
         return action
 
 class ContinuousActor(ShareModule):
+    """Actor in continuous space"""
     def __init__(self, state_dim, action_dim,
                  hidden_features=128,
                  hidden_layers=2,
                  norm=None,
                  hidden_activation='leakyrelu',
-                 ):
+                 *args, **kwargs):
         super().__init__()
         self.state_dim = state_dim
         self.action_dim = action_dim
 
         self.dist_net = torch.nn.Sequential(
             MLP(state_dim, 2 * action_dim, hidden_features, hidden_layers, norm, hidden_activation),
-            DistributionWrapper(distribution_type='gauss', dim=action_dim)
+            DistributionWrapper(distribution_type='normal', dim=action_dim)
+        )
+
+    def forward(self, state):
+        return self.dist_net(state)
+
+    @torch.no_grad()
+    def act(self, state, sample_fn=lambda dist: dist.sample()):
+        param = next(self.dist_net.parameters())
+        device = param.device
+        dtype = param.dtype
+        state = torch.as_tensor(state, dtype=dtype, device=device).unsqueeze(0)
+        action_dist = self.forward(state)
+        action = sample_fn(action_dist)
+        action = action.squeeze(0).numpy()
+        return action
+
+class BoundedContinuousActor(ShareModule):
+    """Actor in continuous space with bound"""
+    def __init__(self, state_dim, action_dim,
+                 hidden_features=128,
+                 hidden_layers=2,
+                 norm=None,
+                 hidden_activation='leakyrelu',
+                 min_action=-1,
+                 max_action=1,
+                 *args, **kwargs):
+        super().__init__()
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+
+        self.dist_net = torch.nn.Sequential(
+            MLP(state_dim, 2 * action_dim, hidden_features, hidden_layers, norm, hidden_activation),
+            DistributionWrapper(distribution_type='tanhnormal', dim=action_dim, min=min_action, max=max_action)
         )
 
     def forward(self, state):
@@ -205,6 +260,7 @@ class ContinuousActor(ShareModule):
         return action
 
 class Critic(ShareModule):
+    """Simple feedforward critic to estimate the value function of state (or state-action pair)"""
     def __init__(self, state_dim, action_dim=None,
                  hidden_features=128,
                  hidden_layers=2,
