@@ -15,7 +15,7 @@ def make_env(config) -> gym.Env:
 
     return env
 
-class ActionRepeat(gym.Env):
+class ActionRepeat:
 
   def __init__(self, env, amount):
     self._env = env
@@ -34,7 +34,7 @@ class ActionRepeat(gym.Env):
       current_step += 1
     return obs, total_reward, done, info
 
-class OneHotAction(gym.Env):
+class OneHotAction:
 
   def __init__(self, env):
     assert isinstance(env.action_space, gym.spaces.Discrete)

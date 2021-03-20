@@ -100,7 +100,7 @@ class SAC:
         self.log_alpha = torch.nn.Parameter(torch.zeros(1, device=self.device) + np.log(self.config['base_alpha'])).float()
         if self.config['auto_alpha']:
             if self.config['env_type'] == 'discrete':
-                self.target_entropy = np.log(self.action_dim)
+                self.target_entropy = 0.9 * np.log(self.action_dim)
             elif self.config['env_type'] == 'continuous':
                 self.target_entropy = - self.action_dim
             self.alpha_optimizor = torch.optim.Adam([self.log_alpha], lr=1e-3)
