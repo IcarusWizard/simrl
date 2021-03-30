@@ -25,7 +25,7 @@ def compute_gae(reward, value, done, gamma=0.99, lam=0.95):
         pre_adv = advantages[t]
         pre_value = value[t]
     returns = value + advantages
-    returns = (returns - returns.mean()) / (returns.std() + 1e-4)
+    
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-4)
 
     return advantages, returns
