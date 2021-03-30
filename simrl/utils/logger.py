@@ -3,9 +3,23 @@ import cv2
 import ray
 import torch
 import numpy as np
+from copy import deepcopy
 from torch.utils.tensorboard import SummaryWriter
 
 from .envs import make_env
+
+@ray.remote
+def test_on_env(env, actor):
+    env = deepcopy(env)
+    actor = deepcopy(actor)
+    reward = 0
+    o = env.reset()
+    d = False
+    while not d:
+        a = actor.act(o)
+        o, r, d, i = env.step(a)
+        reward += r
+    return reward
 
 @ray.remote
 class Logger:
@@ -27,16 +41,7 @@ class Logger:
             self.actor.load_state_dict(actor_state_dict)
             self.actor.eval()
 
-            test_rewards = []
-            for _ in range(self.config['test_num']):
-                reward = 0
-                o = self.env.reset()
-                d = False
-                while not d:
-                    a = self.actor.act(o)
-                    o, r, d, i = self.env.step(a)
-                    reward += r
-                test_rewards.append(reward)
+            test_rewards = ray.get([test_on_env.remote(self.env, self.actor) for _ in range(self.config['test_num'])])
 
             if self.config['log_video']:
                 try:
