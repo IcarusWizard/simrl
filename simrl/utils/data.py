@@ -131,3 +131,9 @@ class ReplayBuffer:
         assert len(self) > 0, 'Cannot sample from an empty buffer!'
         indexes = np.random.randint(0, len(self), size=(batch_size))
         return self.data[indexes]
+
+    def pop(self):
+        ''' Pop up all the data '''
+        data = self.data
+        self.data = None
+        return data
