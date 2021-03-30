@@ -27,7 +27,9 @@ setup(
         "matplotlib",
         "tqdm",
         "tianshou",
-        "pyro-ppl"
+        "pyro-ppl",
+        "opencv-python",
+        "moviepy",
     ],
     
 )

@@ -1,4 +1,5 @@
 import os
+import cv2
 import ray
 import torch
 import numpy as np
@@ -44,6 +45,7 @@ class Logger:
                     d = False
                     while not d:
                         screen = self.env.render(mode='rgb_array')
+                        screen = cv2.resize(screen, (128, 128))
                         imgs.append(screen)
                         a = self.actor.act(o, sample_fn=lambda dist: dist.mode)
                         o, r, d, i = self.env.step(a)
