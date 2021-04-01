@@ -1,6 +1,5 @@
 import ray
 import copy
-from tianshou.data import batch
 import torch
 import random
 import argparse
@@ -45,7 +44,7 @@ class TRPO:
         parser.add_argument('--lambda', type=float, default=0.97)
         parser.add_argument('--delta', type=float, default=0.01)
         parser.add_argument('--epoch', type=int, default=100)
-        parser.add_argument('--step_per_epoch', type=int, default=4000)
+        parser.add_argument('--data_collection_per_epoch', type=int, default=4000)
         parser.add_argument('--num_collectors', type=int, default=4)
         parser.add_argument('--train_v_iters', type=int, default=80)
         parser.add_argument('--cg_iters', type=int, default=10)
@@ -109,7 +108,7 @@ class TRPO:
 
     def run(self):
         for i in tqdm(range(self.config['epoch'])):
-            ray.get(self.collector.collect_steps.remote(self.config["step_per_epoch"], self.actor.get_weights()))
+            ray.get(self.collector.collect_steps.remote(self.config["data_collection_per_epoch"], self.actor.get_weights()))
 
             batchs = ray.get(self.buffer.pop.remote())
             batchs.to_torch(dtype=torch.float32, device=self.device)

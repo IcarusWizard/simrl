@@ -8,7 +8,7 @@ from tqdm import tqdm
 from simrl.utils import setup_seed, compute_gae
 from simrl.utils.modules import OnehotActor, ContinuousActor, Critic
 from simrl.utils.envs import make_env
-from simrl.utils.data import Collector
+from simrl.utils.data import CollectorServer, ReplayBuffer
 from simrl.utils.logger import Logger
 
 def get_ppo_config():
@@ -22,7 +22,8 @@ def get_ppo_config():
     parser.add_argument('--entropy_coef', type=float, default=0)
     parser.add_argument('--grad_clip', type=float, default=0.5)
     parser.add_argument('--epoch', type=int, default=50)
-    parser.add_argument('--step_per_epoch', type=int, default=2048)
+    parser.add_argument('--data_collection_per_epoch', type=int, default=4000)
+    parser.add_argument('--num_collectors', type=int, default=4)
     parser.add_argument('--batch_split', type=int, default=8)
     parser.add_argument('--ppo_run', type=int, default=4)
     parser.add_argument('--test-num', type=int, default=20)
@@ -72,7 +73,8 @@ class PPO:
                              hidden_activation=self.config.get('critic_activation', 'leakyrelu'),
                              norm=self.config.get('critic_norm', None))
 
-        self.collector = Collector.remote(self.config, copy.deepcopy(self.actor))
+        self.buffer = ray.remote(ReplayBuffer).remote(100000)
+        self.collector = CollectorServer.remote(self.config, copy.deepcopy(self.actor), self.buffer, self.config['num_collectors'])
         self.logger = Logger.remote(config, copy.deepcopy(self.actor), 'ppo')
 
         self.actor = self.actor.to(self.device)
@@ -82,9 +84,9 @@ class PPO:
 
     def run(self):
         for i in tqdm(range(self.config['epoch'])):
-            batchs_id = self.collector.collect_steps.remote(self.config["step_per_epoch"], self.actor.get_weights())
-            batchs = ray.get(batchs_id)
+            ray.get(self.collector.collect_steps.remote(self.config["data_collection_per_epoch"], self.actor.get_weights()))
 
+            batchs = ray.get(self.buffer.pop.remote())
             batchs.to_torch(dtype=torch.float32, device=self.device)
 
             # normalize rewards
