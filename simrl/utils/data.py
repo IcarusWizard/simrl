@@ -14,8 +14,6 @@ class Collector:
         self.actor = actor
         self.o = self.env.reset()
 
-        self.print_env_info()
-
     def collect_steps(self, steps, actor_state_dict):
         self.actor.load_state_dict(actor_state_dict)
         self.actor.cpu()
@@ -87,6 +85,7 @@ class CollectorServer:
         self.buffer = buffer
         self.num_collectors = num_collectors
         self.collectors = [Collector.remote(config, actor) for _ in range(num_collectors)]
+        ray.get(self.collectors[0].print_env_info.remote())
 
     def collect_steps(self, steps, actor_state_dict):
         collected_steps = 0
