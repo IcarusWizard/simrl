@@ -24,7 +24,7 @@ def get_ppo_config():
     parser.add_argument('--epoch', type=int, default=50)
     parser.add_argument('--data_collection_per_epoch', type=int, default=4000)
     parser.add_argument('--num_collectors', type=int, default=4)
-    parser.add_argument('--batch_split', type=int, default=8)
+    parser.add_argument('--batch_split', type=int, default=256)
     parser.add_argument('--ppo_run', type=int, default=4)
     parser.add_argument('--test-num', type=int, default=20)
     parser.add_argument('--test_frequency', type=int, default=5)
