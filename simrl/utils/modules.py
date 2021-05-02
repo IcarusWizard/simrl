@@ -280,3 +280,32 @@ class Critic(ShareModule):
             assert action is not None
             state = torch.cat([state, action], dim=-1)
         return self.value_net(state)
+
+class DiscreteQ(ShareModule):
+    """ Q function for discrete action """
+    def __init__(self, state_dim, action_dim,
+                 hidden_features=128,
+                 hidden_layers=2,
+                 norm=None,
+                 hidden_activation='leakyrelu',
+                 dueling : bool = True,
+                 ):
+        super().__init__()
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.dueling = dueling
+
+        if self.dueling:
+            self.value_net = MLP(self.state_dim, 1, hidden_features, hidden_layers, norm, hidden_activation)
+            self.advantage_net = MLP(self.state_dim, self.action_dim, hidden_features, hidden_layers, norm, hidden_activation)
+        else:
+            self.q_net = MLP(self.state_dim, self.action_dim, hidden_features, hidden_layers, norm, hidden_activation)
+
+    def forward(self, state : torch.Tensor):
+        if self.dueling:
+            value = self.value_net(state)
+            advantage = self.advantage_net(state)
+            advantage = advantage - advantage.mean(dim=-1, keepdim=True)
+            return value + advantage
+        else:
+            return self.q_net(state)

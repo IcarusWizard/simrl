@@ -11,6 +11,7 @@ from simrl.utils.modules import OnehotActor, BoundedContinuousActor, Critic
 from simrl.utils.envs import make_env
 from simrl.utils.data import CollectorServer, ReplayBuffer
 from simrl.utils.logger import Logger
+from simrl.utils.actor import DistributionActor
 
 class SAC:
     @staticmethod
@@ -44,7 +45,7 @@ class SAC:
         parser.add_argument('-ca', '--critic_activation', type=str, default='leakyrelu')
         parser.add_argument('-cn', '--critic_norm', type=str, default=None)
         
-        args = parser.parse_known_args()[0]
+        args = parser.parse_args()
         
         return args.__dict__
 
@@ -88,8 +89,8 @@ class SAC:
                          norm=self.config.get('critic_norm', None))
 
         self.buffer = ray.remote(ReplayBuffer).remote(self.config['buffer_size'])
-        self.collector = CollectorServer.remote(self.config, deepcopy(self.actor), self.buffer, self.config['num_collectors'])
-        self.logger = Logger.remote(config, deepcopy(self.actor), 'sac')
+        self.collector = CollectorServer.remote(self.config, deepcopy(DistributionActor(self.actor)), self.buffer, self.config['num_collectors'])
+        self.logger = Logger.remote(config, deepcopy(DistributionActor(self.actor)), 'sac')
 
         self.actor = self.actor.to(self.device)
         self.q1 = self.q1.to(self.device)

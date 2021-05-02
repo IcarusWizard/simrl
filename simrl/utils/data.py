@@ -1,12 +1,15 @@
 import ray
+import torch
 import numpy as np
 from tianshou.data import Batch
+from typing import Dict, Any
 
 from .envs import make_env
+from .actor import Actor
 
 @ray.remote
 class Collector:
-    def __init__(self, config, actor):
+    def __init__(self, config : Dict[str, Any], actor : Actor):
         self.config = config
         self.env = make_env(self.config)
         self.state_dim = self.env.observation_space.shape[0]
@@ -14,9 +17,8 @@ class Collector:
         self.actor = actor
         self.o = self.env.reset()
 
-    def collect_steps(self, steps, actor_state_dict):
-        self.actor.load_state_dict(actor_state_dict)
-        self.actor.cpu()
+    def collect_steps(self, steps : int, parameters : Dict[str, torch.Tensor]):
+        self.actor.set_parameters(parameters)
 
         batchs = []
 
@@ -41,9 +43,8 @@ class Collector:
 
         return batchs
 
-    def collect_trajectory(self, actor_state_dict):
-        self.actor.load_state_dict(actor_state_dict)
-        self.actor.cpu()
+    def collect_trajectory(self, parameters : Dict[str, torch.Tensor]):
+        self.actor.set_parameters(parameters)
 
         batchs = []
         self.o = self.env.reset()

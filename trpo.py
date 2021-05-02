@@ -12,6 +12,7 @@ from simrl.utils.envs import make_env
 from simrl.utils.data import CollectorServer, ReplayBuffer
 from simrl.utils.logger import Logger
 from simrl.utils.dists import kl_divergence
+from simrl.utils.actor import DistributionActor
 
 def cg(Ax, b, cg_iters : int = 10):
     """
@@ -98,8 +99,8 @@ class TRPO:
                              norm=self.config['critic_norm'])
 
         self.buffer = ray.remote(ReplayBuffer).remote(100000)
-        self.collector = CollectorServer.remote(self.config, copy.deepcopy(self.actor), self.buffer, self.config['num_collectors'])
-        self.logger = Logger.remote(config, copy.deepcopy(self.actor), 'trpo')
+        self.collector = CollectorServer.remote(self.config, copy.deepcopy(DistributionActor(self.actor)), self.buffer, self.config['num_collectors'])
+        self.logger = Logger.remote(config, copy.deepcopy(DistributionActor(self.actor)), 'trpo')
 
         self.actor = self.actor.to(self.device)
         self.critic = self.critic.to(self.device)

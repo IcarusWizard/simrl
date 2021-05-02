@@ -1,15 +1,18 @@
 import os
 import cv2
+import gym
 import ray
 import torch
 import numpy as np
 from copy import deepcopy
+from typing import Dict, Any, Optional
 from torch.utils.tensorboard import SummaryWriter
 
 from .envs import make_env
+from .actor import Actor
 
 @ray.remote
-def test_on_env(env, actor):
+def test_on_env(env : gym.Env, actor : Actor):
     env = deepcopy(env)
     actor = deepcopy(actor)
     reward = 0
@@ -23,7 +26,7 @@ def test_on_env(env, actor):
 
 @ray.remote
 class Logger:
-    def __init__(self, config, actor, algo_name):
+    def __init__(self, config : Dict[str, Any], actor : Actor, algo_name : str):
         self.config = config
         self.actor = actor
         self.count = 0
@@ -34,12 +37,11 @@ class Logger:
         self.log_dir = os.path.join('logs', self.config['env'], algo_name, log_name)
         self.writer = SummaryWriter(self.log_dir)
 
-    def test_and_log(self, actor_state_dict=None, info={}):
+    def test_and_log(self, parameters : Optional[Dict[str, torch.Tensor]]=None, info : Dict[str, float]={}):
         self.count += 1
         
-        if actor_state_dict:
-            self.actor.load_state_dict(actor_state_dict)
-            self.actor.eval()
+        if parameters:
+            self.actor.set_parameters(parameters)
 
             test_rewards = ray.get([test_on_env.remote(self.env, self.actor) for _ in range(self.config['test_num'])])
 

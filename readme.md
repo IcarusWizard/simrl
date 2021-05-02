@@ -5,6 +5,6 @@ Simple Implementations of RL Algorithm in PyTorch.
 - [x] PPO
 - [x] TRPO
 - [ ] DDPG
-- [ ] DQN
+- [X] DQN
 - [ ] A3C
 - [x] SAC
