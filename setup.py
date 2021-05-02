@@ -1,5 +1,6 @@
 import os
 from setuptools import setup
+from setuptools import find_packages
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'simrl'))
@@ -15,6 +16,7 @@ setup(
     url="https://github.com/IcarusWizard/rldemos",
     version=__version__,
     py_modules=['simrl'],
+    packages=find_packages(),
     author="Icarus",
     author_email="wizardicarus@gmail.com",
     python_requires=">=3.7",
