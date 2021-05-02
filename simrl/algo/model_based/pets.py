@@ -63,6 +63,7 @@ class PETS:
         self.collector = CollectorServer.remote(self.config, deepcopy(actor), self.buffer, self.config['num_collectors'])
         self.logger = Logger.remote(config, deepcopy(actor), 'pets')
 
+        self.transition = self.transition.to(self.device)
         self.optimizor = torch.optim.Adam(self.transition.parameters(), lr=config['lr'])
 
     def run(self):
