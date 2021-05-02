@@ -1,7 +1,6 @@
 import os
-from setuptools import setup
-from setuptools import find_packages
 import sys
+from setuptools import setup, find_packages
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'simrl'))
 from version import __version__
@@ -13,9 +12,8 @@ assert sys.version_info.major == 3, \
 setup(
     name='simrl',
     description="Simple Implementations of RL Algorithm in PyTorch",
-    url="https://github.com/IcarusWizard/rldemos",
+    url="https://github.com/IcarusWizard/simrl",
     version=__version__,
-    py_modules=['simrl'],
     packages=find_packages(),
     author="Icarus",
     author_email="wizardicarus@gmail.com",
@@ -25,6 +23,7 @@ setup(
         "tensorboard",
         "ray",
         "gym",
+        "gym[box2d]",
         "numpy",
         "matplotlib",
         "tqdm",
@@ -33,5 +32,4 @@ setup(
         "opencv-python",
         "moviepy",
     ],
-    
 )
