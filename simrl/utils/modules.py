@@ -14,7 +14,12 @@ ACTIVATION_CREATERS = {
     'prelu' : lambda dim: nn.PReLU(dim),
 }
 
-class MLP(nn.Module):
+class ShareModule(torch.nn.Module):
+    """Module with the ablity to export its weights"""
+    def get_weights(self):
+        return {k : v.cpu() for k, v in self.state_dict().items()}
+
+class MLP(ShareModule):
     r"""
         Multi-layer Perceptron
         Inputs: 
@@ -63,7 +68,7 @@ class MLP(nn.Module):
         out = out.view(*head_shape, out.shape[-1])
         return out
 
-class DistributionWrapper(nn.Module):
+class DistributionWrapper(ShareModule):
     r"""wrap output of Module to distribution"""
     BASE_TYPES = ['normal', 'tanhnormal', 'gmm', 'onehot']
     SUPPORTED_TYPES = BASE_TYPES + ['mix']
@@ -158,11 +163,6 @@ class DistributionWrapper(nn.Module):
             self.distribution_type, 
             self.params['dim'] if not self.distribution_type == 'mix' else len(self.wrapper_list)
         )
-
-class ShareModule(torch.nn.Module):
-    """Module with the ablity to export its weights"""
-    def get_weights(self):
-        return {k : v.cpu() for k, v in self.state_dict().items()}
 
 class OnehotActor(ShareModule):
     """Actor in discrete space (output onehot vectors)"""
@@ -309,3 +309,91 @@ class DiscreteQ(ShareModule):
             return value + advantage
         else:
             return self.q_net(state)
+
+class EnsembleLinear(ShareModule):
+    def __init__(self, in_features, out_features, ensemble_size=7):
+        super().__init__()
+
+        self.ensemble_size = ensemble_size
+
+        self.register_parameter('weight', torch.nn.Parameter(torch.zeros(ensemble_size, in_features, out_features)))
+        self.register_parameter('bias', torch.nn.Parameter(torch.zeros(ensemble_size, 1, out_features)))
+
+        torch.nn.init.trunc_normal_(self.weight, std=1/(2*in_features**0.5))
+
+        self.register_parameter('saved_weight', torch.nn.Parameter(self.weight.detach().clone()))
+        self.register_parameter('saved_bias', torch.nn.Parameter(self.bias.detach().clone()))
+
+        self.select = list(range(0, self.ensemble_size))
+
+    def forward(self, x):
+        weight = self.weight[self.select]
+        bias = self.bias[self.select]
+
+        if len(x.shape) == 2:
+            x = torch.einsum('ij,bjk->bik', x, weight)
+        else:
+            x = torch.einsum('bij,bjk->bik', x, weight)
+
+        x = x + bias
+
+        return x
+
+    def set_select(self, indexes):
+        assert len(indexes) <= self.ensemble_size and max(indexes) < self.ensemble_size
+        self.select = indexes
+        self.weight.data[indexes] = self.saved_weight.data[indexes]
+        self.bias.data[indexes] = self.saved_bias.data[indexes]
+
+    def update_save(self, indexes):
+        self.saved_weight.data[indexes] = self.weight.data[indexes]
+        self.saved_bias.data[indexes] = self.bias.data[indexes]
+
+class EnsembleTransition(ShareModule):
+    def __init__(self, obs_dim, action_dim, hidden_features, hidden_layers, ensemble_size=7, mode='local', with_reward=True):
+        super().__init__()
+        self.obs_dim = obs_dim
+        self.mode = mode
+        self.with_reward = with_reward
+        self.ensemble_size = ensemble_size
+
+        self.activation = torch.nn.LeakyReLU(0.1, inplace=True)
+
+        module_list = []
+        for i in range(hidden_layers):
+            if i == 0:
+                module_list.append(EnsembleLinear(obs_dim + action_dim, hidden_features, ensemble_size))
+            else:
+                module_list.append(EnsembleLinear(hidden_features, hidden_features, ensemble_size))
+        self.backbones = torch.nn.ModuleList(module_list)
+
+        self.output_layer = EnsembleLinear(hidden_features, 2 * (obs_dim + self.with_reward), ensemble_size)
+
+        self.register_parameter('max_logstd', torch.nn.Parameter(torch.ones(obs_dim + self.with_reward) * 1, requires_grad=True))
+        self.register_parameter('min_logstd', torch.nn.Parameter(torch.ones(obs_dim + self.with_reward) * -5, requires_grad=True))
+
+    def forward(self, obs : torch.Tensor, action : torch.Tensor):
+        obs_action = torch.cat([obs, action], dim=-1)
+        output = obs_action
+        for layer in self.backbones:
+            output = self.activation(layer(output))
+        mu, logstd = torch.chunk(self.output_layer(output), 2, dim=-1)
+        logstd = soft_clamp(logstd, self.min_logstd, self.max_logstd)
+        if self.mode == 'local':
+            if self.with_reward:
+                obs, reward = torch.split(mu, [self.obs_dim, 1], dim=-1)
+                obs = obs + obs_action[..., :self.obs_dim]
+                mu = torch.cat([obs, reward], dim=-1)
+            else:
+                mu = mu + obs_action[..., :self.obs_dim]
+        return DiagnalNormal(mu, torch.exp(logstd))
+
+    def set_select(self, indexes):
+        for layer in self.backbones:
+            layer.set_select(indexes)
+        self.output_layer.set_select(indexes)
+
+    def update_save(self, indexes):
+        for layer in self.backbones:
+            layer.update_save(indexes)
+        self.output_layer.update_save(indexes)

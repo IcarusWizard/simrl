@@ -8,9 +8,15 @@ from simrl.utils.modules import DiscreteQ
 
 class Actor(ABC):
     ''' Actor class is used to interact with the environment '''
+
+    @torch.no_grad()
     def act(self, state : np.ndarray, *args, **kwargs) -> np.ndarray:
         ''' take action on the given state '''
         raise NotImplementedError
+
+    def reset(self) -> None:
+        ''' reset the actor to recieve new trajectory, useful when the actor is stateless '''
+        pass
 
     def set_parameters(self, parameters : Dict[str, torch.Tensor]) -> None:
         ''' set parameters for networks ''' 
@@ -63,3 +69,36 @@ class EpsilonGreedyActor(Actor):
 
     def set_parameters(self, parameters : Dict[str, torch.Tensor]) -> None:
         self.q_func.load_state_dict(parameters)
+
+class RandomShootingActor(Actor):
+    ''' Actor for random shooting '''
+    def __init__(self, transition, action_space, horizon, samples) -> None:
+        self.transition = transition
+        self.action_space = action_space
+        self.horizon = horizon
+        self.samples = samples
+
+    @torch.no_grad()
+    def act(self, state: np.ndarray, *args, **kwargs) -> np.ndarray:
+        param = next(self.transition.parameters())
+        device = param.device
+        dtype = param.dtype
+        state = torch.as_tensor(state, dtype=dtype, device=device).unsqueeze(0).repeat(self.samples, 1)
+        actions = torch.as_tensor(np.stack([self.action_space.sample() for _ in range(self.horizon * self.samples)]), dtype=dtype, device=device)
+        actions = actions.view(self.horizon, self.samples, actions.shape[-1])
+
+        total_reward = 0
+        for t in range(self.horizon):
+            output_dist = self.transition(state, actions[t])
+            output = output_dist.mode.mean(dim=0)
+            state = output[..., :-1]
+            total_reward += output[..., -1]
+
+        max_index = torch.argmax(total_reward)
+        action = actions[0, max_index]
+        action = action.numpy()
+
+        return action 
+
+    def set_parameters(self, parameters : Dict[str, torch.Tensor]) -> None:
+        self.transition.load_state_dict(parameters)

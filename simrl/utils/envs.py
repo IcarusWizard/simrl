@@ -1,4 +1,6 @@
+import os
 import gym
+import random
 import numpy as np
 
 def make_env(config) -> gym.Env:
@@ -69,7 +71,7 @@ class OneHotAction:
 
     def _sample_action(self):
         actions = self._env.action_space.n
-        index = self._random.randint(0, actions)
+        index = random.randint(0, actions - 1)
         reference = np.zeros(actions, dtype=np.float32)
         reference[index] = 1.0
         return reference
