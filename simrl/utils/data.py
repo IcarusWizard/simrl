@@ -1,6 +1,7 @@
 import ray
 import torch
 import numpy as np
+from copy import deepcopy
 from tianshou.data import Batch
 from typing import Dict, Any
 
@@ -16,6 +17,7 @@ class Collector:
         self.action_dim = self.env.action_space.shape[0]
         self.actor = actor
         self.o = self.env.reset()
+        self.actor.reset()
 
     def collect_steps(self, steps : int, parameters : Dict[str, torch.Tensor]):
         self.actor.set_parameters(parameters)
@@ -36,6 +38,7 @@ class Collector:
 
             if d:
                 self.o = self.env.reset()
+                self.actor.reset()
             else:
                 self.o = n_o
 
@@ -48,6 +51,7 @@ class Collector:
 
         batchs = []
         self.o = self.env.reset()
+        self.actor.reset()
         while True:
             a = self.actor.act(self.o)
             n_o, r, d, info = self.env.step(a)
@@ -62,6 +66,7 @@ class Collector:
 
             if d:
                 self.o = self.env.reset()
+                self.actor.reset()
                 break
             else:
                 self.o = n_o
@@ -69,6 +74,10 @@ class Collector:
         batchs = Batch.stack(batchs)
 
         return batchs
+
+    def set_actor(self, actor : Actor):
+        self.actor = actor
+        self.actor.reset()
 
     def print_env_info(self):
         print('env name:', self.config['env'])
@@ -103,6 +112,11 @@ class CollectorServer:
             self.buffer.put.remote(result)
             collected_steps += result.shape[0]
 
+        return collected_steps
+
+    def set_actor(self, actor : Actor):
+        ray.get([collector.set_actor.remote(deepcopy(actor)) for collector in self.collectors])
+
 
 class ReplayBuffer:
     """
@@ -127,7 +141,7 @@ class ReplayBuffer:
         if self.data is None: return 0
         return self.data.shape[0]
 
-    def sample(self, batch_size):
+    def sample(self, batch_size : int):
         assert len(self) > 0, 'Cannot sample from an empty buffer!'
         indexes = np.random.randint(0, len(self), size=(batch_size))
         return self.data[indexes]

@@ -10,7 +10,7 @@ from simrl.utils.modules import EnsembleTransition
 from simrl.utils.envs import make_env
 from simrl.utils.data import CollectorServer, ReplayBuffer
 from simrl.utils.logger import Logger
-from simrl.utils.actor import CEMActor
+from simrl.utils.actor import RandomActor, CEMActor
 
 class PETS:
     @staticmethod
@@ -21,8 +21,9 @@ class PETS:
         parser.add_argument('--lr', type=float, default=3e-4)
         parser.add_argument('--batch_size', type=int, default=64)
         parser.add_argument('--buffer_size', type=int, default=int(1e6))
+        parser.add_argument('--initial_samples', type=int, default=5000)
         parser.add_argument('--epoch', type=int, default=100)
-        parser.add_argument('--horizon', type=int, default=10)
+        parser.add_argument('--horizon', type=int, default=100)
         parser.add_argument('--samples', type=int, default=100)
         parser.add_argument('--elites', type=int, default=20)
         parser.add_argument('--iterations', type=int, default=10)
@@ -63,7 +64,9 @@ class PETS:
                          self.config['elites'], self.config['iterations'])
 
         self.buffer = ray.remote(ReplayBuffer).remote(self.config['buffer_size'])
-        self.collector = CollectorServer.remote(self.config, deepcopy(actor), self.buffer, self.config['num_collectors'])
+        self.collector = CollectorServer.remote(self.config, RandomActor(self.env.action_space), self.buffer, self.config['num_collectors'])
+        ray.get(self.collector.collect_steps.remote(self.config['initial_samples'], self.transition.get_weights()))
+        ray.get(self.collector.set_actor.remote(deepcopy(actor)))
         self.logger = Logger.remote(config, deepcopy(actor), 'pets')
 
         self.transition = self.transition.to(self.device)
@@ -71,9 +74,6 @@ class PETS:
 
     def run(self):
         for i in tqdm(range(self.config['epoch'])):
-            batchs_id = self.collector.collect_steps.remote(self.config['data_collection_per_epoch'], self.transition.get_weights())
-            batchs = ray.get(batchs_id)
-        
             for _ in range(self.config['train_steps_per_epoch']):
                 batchs = ray.get(self.buffer.sample.remote(self.config['batch_size']))
 
@@ -94,6 +94,9 @@ class PETS:
                 self.logger.test_and_log.remote(None, info)
 
             self.logger.test_and_log.remote(self.transition.get_weights() if i % self.config['test_frequency'] == 0 else None, info)
+
+            if not i == self.config['epoch'] - 1:
+                ray.get(self.collector.collect_steps.remote(self.config['data_collection_per_epoch'], self.transition.get_weights()))
 
 if __name__ == '__main__':
     ray.init()

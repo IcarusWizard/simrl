@@ -18,12 +18,25 @@ class Actor(ABC):
         raise NotImplementedError
 
     def reset(self) -> None:
-        ''' reset the actor to recieve new trajectory, useful when the actor is stateless '''
+        ''' reset the actor to recieve new trajectory, useful when the actor is stateful '''
         pass
 
     def set_parameters(self, parameters : Dict[str, torch.Tensor]) -> None:
         ''' set parameters for networks ''' 
         raise NotImplementedError
+
+class RandomActor(Actor):
+    ''' Actor takes actions sampled from uniform distribution, useful to fill initial buffer '''
+
+    def __init__(self, action_space : gym.Space) -> None:
+        super().__init__()
+        self.action_space = action_space
+
+    def act(self, state: np.ndarray, *args, **kwargs) -> np.ndarray:
+        return self.action_space.sample()
+
+    def set_parameters(self, parameters: Dict[str, torch.Tensor]) -> None:
+        pass
 
 class DistributionActor(Actor):
     ''' Actor for policy with distributional interface '''
