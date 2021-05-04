@@ -112,9 +112,9 @@ class Onehot(torch.distributions.OneHotCategorical, TorchDistributionMixin, Dist
     has_rsample = True
     support = constraints.real
 
-    def __init__(self, logits):
+    def __init__(self, logits=None, probs=None):
         """logits -> tensor[*, N]"""
-        super(Onehot, self).__init__(logits=logits)
+        super(Onehot, self).__init__(logits=logits, probs=probs)
 
     def rsample(self, sample_shape=torch.Size()):
         # Implement straight-through estimator

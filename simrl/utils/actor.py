@@ -1,10 +1,13 @@
+import gym
 import torch
 import random
 import numpy as np
 from abc import ABC
+from copy import deepcopy
 from typing import Dict, Optional
 
 from simrl.utils.modules import DiscreteQ
+from simrl.utils.dists import DiagnalNormal, Onehot
 
 class Actor(ABC):
     ''' Actor class is used to interact with the environment '''
@@ -90,13 +93,67 @@ class RandomShootingActor(Actor):
         total_reward = 0
         for t in range(self.horizon):
             output_dist = self.transition(state, actions[t])
-            output = output_dist.mode.mean(dim=0)
+            output = output_dist.sample()
+            model_index = np.random.randint(0, output.shape[0], self.samples)
+            output = output[model_index, np.arange(self.samples)]
             state = output[..., :-1]
             total_reward += output[..., -1]
 
         max_index = torch.argmax(total_reward)
         action = actions[0, max_index]
-        action = action.numpy()
+        action = action.cpu().numpy()
+
+        return action 
+
+    def set_parameters(self, parameters : Dict[str, torch.Tensor]) -> None:
+        self.transition.load_state_dict(parameters)
+
+
+class CEMActor(Actor):
+    ''' Actor for random shooting with CEM iterations '''
+    def __init__(self, transition, action_space, horizon, samples, elites, iterations) -> None:
+        self.transition = transition
+        self.action_space = action_space
+        self.continuous = isinstance(self.action_space, gym.spaces.Box)
+        self.horizon = horizon
+        self.samples = samples
+        self.elites = elites
+        self.iterations = iterations
+
+    @torch.no_grad()
+    def act(self, state: np.ndarray, *args, **kwargs) -> np.ndarray:
+        param = next(self.transition.parameters())
+        device = param.device
+        dtype = param.dtype
+        init_state = torch.as_tensor(state, dtype=dtype, device=device).unsqueeze(0).repeat(self.samples, 1)
+
+        for i in range(self.iterations):
+            state = deepcopy(init_state)
+            if i == 0: # initialize with uniform samples
+                actions = torch.as_tensor(np.stack([self.action_space.sample() for _ in range(self.horizon * self.samples)]), dtype=dtype, device=device)
+                actions = actions.view(self.horizon, self.samples, actions.shape[-1])
+            else:
+                actions = action_dist.sample((self.samples,)).permute(1, 0, 2).contiguous()
+
+            total_reward = 0
+            for t in range(self.horizon):
+                output_dist = self.transition(state, actions[t])
+                output = output_dist.sample()
+                model_index = np.random.randint(0, output.shape[0], self.samples)
+                output = output[model_index, np.arange(self.samples)]
+                state = output[..., :-1]
+                total_reward += output[..., -1]
+
+            elite_index = torch.argsort(total_reward)[-self.elites:]
+            actions = actions[:, elite_index]
+
+            if self.continuous:
+                action_dist = DiagnalNormal(actions.mean(dim=1), actions.std(dim=1))
+            else:
+                action_dist = Onehot(probs=actions.mean(dim=1))
+
+        action = actions[0, -1]
+        action = action.cpu().numpy()
 
         return action 
 

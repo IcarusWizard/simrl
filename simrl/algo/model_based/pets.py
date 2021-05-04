@@ -11,32 +11,34 @@ from simrl.utils.modules import EnsembleTransition
 from simrl.utils.envs import make_env
 from simrl.utils.data import CollectorServer, ReplayBuffer
 from simrl.utils.logger import Logger
-from simrl.utils.actor import RandomShootingActor
+from simrl.utils.actor import CEMActor
 
 class PETS:
     @staticmethod
     def get_config():
         parser = argparse.ArgumentParser()
-        parser.add_argument('--env', type=str, default='CartPole-v1')
+        parser.add_argument('--env', type=str, default='Pedulum-v0')
         parser.add_argument('--seed', type=int, default=None)
         parser.add_argument('--lr', type=float, default=3e-4)
-        parser.add_argument('--batch_size', type=int, default=256)
+        parser.add_argument('--batch_size', type=int, default=64)
         parser.add_argument('--buffer_size', type=int, default=int(1e6))
         parser.add_argument('--epoch', type=int, default=100)
-        parser.add_argument('--horizon', type=int, default=5)
+        parser.add_argument('--horizon', type=int, default=10)
         parser.add_argument('--samples', type=int, default=100)
-        parser.add_argument('--data_collection_per_epoch', type=int, default=4000)
-        parser.add_argument('--train_steps_per_epoch', type=int, default=1000)
-        parser.add_argument('--num_collectors', type=int, default=4)
-        parser.add_argument('--test-num', type=int, default=20)
+        parser.add_argument('--elites', type=int, default=20)
+        parser.add_argument('--iterations', type=int, default=10)
+        parser.add_argument('--data_collection_per_epoch', type=int, default=100)
+        parser.add_argument('--train_steps_per_epoch', type=int, default=100)
+        parser.add_argument('--num_collectors', type=int, default=1)
+        parser.add_argument('--test-num', type=int, default=10)
         parser.add_argument('--test_frequency', type=int, default=5)
         parser.add_argument('--log_video', action='store_true')
         parser.add_argument('--log', type=str, default=None)
         parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
 
-        parser.add_argument('--hidden_feature', type=int, default=256)
+        parser.add_argument('--hidden_feature', type=int, default=64)
         parser.add_argument('--hidden_layers', type=int, default=2)
-        parser.add_argument('--num_ensemble', type=int, default=5)
+        parser.add_argument('--num_ensemble', type=int, default=4)
         
         args = parser.parse_args()
         
@@ -57,7 +59,9 @@ class PETS:
                                              ensemble_size=self.config['num_ensemble'],
                                              with_reward=True)
 
-        actor = RandomShootingActor(self.transition, self.env.action_space, self.config['horizon'], self.config['samples'])
+        actor = CEMActor(self.transition, self.env.action_space, 
+                         self.config['horizon'], self.config['samples'],
+                         self.config['elites'], self.config['iterations'])
 
         self.buffer = ray.remote(ReplayBuffer).remote(self.config['buffer_size'])
         self.collector = CollectorServer.remote(self.config, deepcopy(actor), self.buffer, self.config['num_collectors'])
