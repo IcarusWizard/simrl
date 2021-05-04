@@ -41,6 +41,17 @@ class ActionRepeat:
             current_step += 1
         return obs, total_reward, done, info
 
+class OneHotSpace(gym.Space):
+    def sample(self):
+        actions = self.shape[0]
+        index = random.randint(0, actions - 1)
+        reference = np.zeros(actions, dtype=np.float32)
+        reference[index] = 1.0
+        return reference
+
+    def contains(self, x):
+        return all(x >= 0 & x <= 1) and x.sum() == 1.0
+
 class OneHotAction:
     def __init__(self, env):
         assert isinstance(env.action_space, gym.spaces.Discrete)
@@ -58,8 +69,7 @@ class OneHotAction:
     @property
     def action_space(self):
         shape = (self._env.action_space.n,)
-        space = gym.spaces.Box(low=0, high=1, shape=shape, dtype=np.float32)
-        space.sample = self._sample_action
+        space = OneHotSpace(shape=shape, dtype=np.float32)
         return space
 
     def step(self, action):
@@ -68,10 +78,3 @@ class OneHotAction:
 
     def reset(self):
         return self._env.reset()
-
-    def _sample_action(self):
-        actions = self._env.action_space.n
-        index = random.randint(0, actions - 1)
-        reference = np.zeros(actions, dtype=np.float32)
-        reference[index] = 1.0
-        return reference
