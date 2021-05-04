@@ -2,7 +2,6 @@ import ray
 import torch
 import random
 import argparse
-import numpy as np
 from tqdm import tqdm
 from copy import deepcopy
 
@@ -17,7 +16,7 @@ class PETS:
     @staticmethod
     def get_config():
         parser = argparse.ArgumentParser()
-        parser.add_argument('--env', type=str, default='Pedulum-v0')
+        parser.add_argument('--env', type=str, default='Pendulum-v0')
         parser.add_argument('--seed', type=int, default=None)
         parser.add_argument('--lr', type=float, default=3e-4)
         parser.add_argument('--batch_size', type=int, default=64)
