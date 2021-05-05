@@ -25,6 +25,10 @@ class Actor(ABC):
         ''' set parameters for networks ''' 
         raise NotImplementedError
 
+    def to(self, device : str):
+        ''' change device if possible '''
+        pass
+
 class RandomActor(Actor):
     ''' Actor takes actions sampled from uniform distribution, useful to fill initial buffer '''
 
@@ -57,6 +61,9 @@ class DistributionActor(Actor):
     def set_parameters(self, parameters : Dict[str, torch.Tensor]) -> None:
         self.model.load_state_dict(parameters)
 
+    def to(self, device : str):
+        self.model = self.model.to(device)
+
 class EpsilonGreedyActor(Actor):
     ''' Actor for q-learning policy '''
     def __init__(self, q_func : DiscreteQ, epsilon : float) -> None:
@@ -85,6 +92,9 @@ class EpsilonGreedyActor(Actor):
 
     def set_parameters(self, parameters : Dict[str, torch.Tensor]) -> None:
         self.q_func.load_state_dict(parameters)
+
+    def to(self, device : str):
+        self.q_func = self.q_func.to(device)
 
 class RandomShootingActor(Actor):
     ''' Actor for random shooting '''
@@ -121,10 +131,13 @@ class RandomShootingActor(Actor):
     def set_parameters(self, parameters : Dict[str, torch.Tensor]) -> None:
         self.transition.load_state_dict(parameters)
 
+    def to(self, device : str):
+        self.transition = self.transition.to(device)
+
 
 class CEMActor(Actor):
     ''' Actor for random shooting with CEM iterations '''
-    def __init__(self, transition, action_space, horizon, samples, elites, iterations) -> None:
+    def __init__(self, transition, action_space, horizon, samples, elites, iterations, save_plan=True) -> None:
         self.transition = transition
         self.action_space = action_space
         self.continuous = isinstance(self.action_space, gym.spaces.Box)
@@ -132,6 +145,11 @@ class CEMActor(Actor):
         self.samples = samples
         self.elites = elites
         self.iterations = iterations
+        self.save_plan = save_plan
+        self.plan_dist = None
+
+    def reset(self) -> None:
+        self.plan_dist = None
 
     @torch.no_grad()
     def act(self, state: np.ndarray, *args, **kwargs) -> np.ndarray:
@@ -142,9 +160,13 @@ class CEMActor(Actor):
 
         for i in range(self.iterations):
             state = deepcopy(init_state)
-            if i == 0: # initialize with uniform samples
-                actions = torch.as_tensor(np.stack([self.action_space.sample() for _ in range(self.horizon * self.samples)]), dtype=dtype, device=device)
-                actions = actions.view(self.horizon, self.samples, actions.shape[-1])
+            if i == 0: 
+                if self.plan_dist is None: # initialize with uniform samples
+                    actions = torch.as_tensor(np.stack([self.action_space.sample() for _ in range(self.horizon * self.samples)]), dtype=dtype, device=device)
+                    actions = actions.view(self.horizon, self.samples, actions.shape[-1])
+                else:
+                    last_action = torch.as_tensor(np.stack([self.action_space.sample() for _ in range(self.samples)]), dtype=dtype, device=device).unsqueeze(dim=0)
+                    actions = torch.cat([self.plan_dist.sample((self.samples,)).permute(1, 0, 2).contiguous(), last_action], dim=0)
             else:
                 actions = action_dist.sample((self.samples,)).permute(1, 0, 2).contiguous()
 
@@ -165,6 +187,12 @@ class CEMActor(Actor):
             else:
                 action_dist = Onehot(probs=actions.mean(dim=1))
 
+        if self.save_plan:
+            if self.continuous:
+                self.plan_dist = DiagnalNormal(action_dist.mode[1:], action_dist.std[1:] + 1e-4)
+            else:
+                self.plan_dist = Onehot(probs=action_dist.probs[1:])
+
         action = actions[0, -1]
         action = action.cpu().numpy()
 
@@ -172,3 +200,6 @@ class CEMActor(Actor):
 
     def set_parameters(self, parameters : Dict[str, torch.Tensor]) -> None:
         self.transition.load_state_dict(parameters)
+
+    def to(self, device : str):
+        self.transition = self.transition.to(device)

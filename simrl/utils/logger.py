@@ -30,6 +30,8 @@ class Logger:
     def __init__(self, config : Dict[str, Any], actor : Actor, algo_name : str):
         self.config = config
         self.actor = actor
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.actor.to(self.device)
         self.count = 0
 
         self.env = make_env(config)

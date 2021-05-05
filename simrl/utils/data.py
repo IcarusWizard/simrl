@@ -8,6 +8,40 @@ from typing import Dict, Any
 from .envs import make_env
 from .actor import Actor
 
+class ReplayBuffer:
+    """
+    A simple FIFO experience replay buffer.
+    """
+    def __init__(self, buffer_size : int):
+        self.data = None
+        self.buffer_size = int(buffer_size)
+
+    def put(self, batch_data : Batch):
+        batch_data.to_torch(device='cpu')
+
+        if self.data is None:
+            self.data = batch_data
+        else:
+            self.data.cat_(batch_data)
+        
+        if len(self) > self.buffer_size:
+            self.data = self.data[len(self) - self.buffer_size : ]
+
+    def __len__(self):
+        if self.data is None: return 0
+        return self.data.shape[0]
+
+    def sample(self, batch_size : int):
+        assert len(self) > 0, 'Cannot sample from an empty buffer!'
+        indexes = np.random.randint(0, len(self), size=(batch_size))
+        return self.data[indexes]
+
+    def pop(self):
+        ''' Pop up all the data '''
+        data = self.data
+        self.data = None
+        return data
+
 @ray.remote
 class Collector:
     def __init__(self, config : Dict[str, Any], actor : Actor):
@@ -16,8 +50,10 @@ class Collector:
         self.state_dim = self.env.observation_space.shape[0]
         self.action_dim = self.env.action_space.shape[0]
         self.actor = actor
-        self.o = self.env.reset()
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.actor.to(self.device)
         self.actor.reset()
+        self.o = self.env.reset()
 
     def collect_steps(self, steps : int, parameters : Dict[str, torch.Tensor]):
         self.actor.set_parameters(parameters)
@@ -77,6 +113,7 @@ class Collector:
 
     def set_actor(self, actor : Actor):
         self.actor = actor
+        self.actor.to(self.device)
         self.actor.reset()
 
     def print_env_info(self):
@@ -90,11 +127,11 @@ class Collector:
         
 @ray.remote
 class CollectorServer:
-    def __init__(self, config, actor, buffer, num_collectors):
+    def __init__(self, config : Dict[str, Any], actor : Actor, buffer : ReplayBuffer, num_collectors : int, gpus_per_collector : float = 0):
         self.config = config
         self.buffer = buffer
         self.num_collectors = num_collectors
-        self.collectors = [Collector.remote(config, actor) for _ in range(num_collectors)]
+        self.collectors = [Collector.options(num_gpus=gpus_per_collector).remote(config, actor) for _ in range(num_collectors)]
         ray.get(self.collectors[0].print_env_info.remote())
 
     def collect_steps(self, steps, actor_state_dict):
@@ -116,38 +153,3 @@ class CollectorServer:
 
     def set_actor(self, actor : Actor):
         ray.get([collector.set_actor.remote(deepcopy(actor)) for collector in self.collectors])
-
-
-class ReplayBuffer:
-    """
-    A simple FIFO experience replay buffer.
-    """
-    def __init__(self, buffer_size : int):
-        self.data = None
-        self.buffer_size = int(buffer_size)
-
-    def put(self, batch_data : Batch):
-        batch_data.to_torch(device='cpu')
-
-        if self.data is None:
-            self.data = batch_data
-        else:
-            self.data.cat_(batch_data)
-        
-        if len(self) > self.buffer_size:
-            self.data = self.data[len(self) - self.buffer_size : ]
-
-    def __len__(self):
-        if self.data is None: return 0
-        return self.data.shape[0]
-
-    def sample(self, batch_size : int):
-        assert len(self) > 0, 'Cannot sample from an empty buffer!'
-        indexes = np.random.randint(0, len(self), size=(batch_size))
-        return self.data[indexes]
-
-    def pop(self):
-        ''' Pop up all the data '''
-        data = self.data
-        self.data = None
-        return data

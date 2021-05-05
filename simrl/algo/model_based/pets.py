@@ -27,6 +27,7 @@ class PETS:
         parser.add_argument('--samples', type=int, default=100)
         parser.add_argument('--elites', type=int, default=20)
         parser.add_argument('--iterations', type=int, default=10)
+        parser.add_argument('--save_plan', type=lambda x: [False, True][int(x)], default=True)
         parser.add_argument('--data_collection_per_epoch', type=int, default=100)
         parser.add_argument('--train_steps_per_epoch', type=int, default=100)
         parser.add_argument('--num_collectors', type=int, default=1)
@@ -51,6 +52,7 @@ class PETS:
         self.state_dim = self.env.observation_space.shape[0]
         self.action_dim = self.env.action_space.shape[0]
         self.device = self.config['device']
+        self.gpu_per_worker = torch.cuda.device_count() / (self.config['num_collectors'] + 1)
 
         self.transition = EnsembleTransition(obs_dim=self.state_dim,
                                              action_dim=self.action_dim,
@@ -61,13 +63,13 @@ class PETS:
 
         actor = CEMActor(self.transition, self.env.action_space, 
                          self.config['horizon'], self.config['samples'],
-                         self.config['elites'], self.config['iterations'])
+                         self.config['elites'], self.config['iterations'], self.config['save_plan'])
 
         self.buffer = ray.remote(ReplayBuffer).remote(self.config['buffer_size'])
-        self.collector = CollectorServer.remote(self.config, RandomActor(self.env.action_space), self.buffer, self.config['num_collectors'])
+        self.collector = CollectorServer.remote(self.config, RandomActor(self.env.action_space), self.buffer, self.config['num_collectors'], self.gpu_per_worker)
         ray.get(self.collector.collect_steps.remote(self.config['initial_samples'], self.transition.get_weights()))
         ray.get(self.collector.set_actor.remote(deepcopy(actor)))
-        self.logger = Logger.remote(config, deepcopy(actor), 'pets')
+        self.logger = Logger.options(num_gpus=self.gpu_per_worker).remote(config, deepcopy(actor), 'pets')
 
         self.transition = self.transition.to(self.device)
         self.optimizor = torch.optim.Adam(self.transition.parameters(), lr=config['lr'])
