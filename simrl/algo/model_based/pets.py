@@ -10,7 +10,7 @@ from simrl.utils.modules import EnsembleTransition
 from simrl.utils.envs import make_env
 from simrl.utils.data import CollectorServer, ReplayBuffer
 from simrl.utils.logger import Logger
-from simrl.utils.actor import RandomActor, CEMActor
+from simrl.utils.actor import RandomActor, CEMActor, RandomShootingActor
 
 class PETS:
     @staticmethod
@@ -23,10 +23,11 @@ class PETS:
         parser.add_argument('--buffer_size', type=int, default=int(1e6))
         parser.add_argument('--initial_samples', type=int, default=5000)
         parser.add_argument('--epoch', type=int, default=100)
-        parser.add_argument('--horizon', type=int, default=100)
-        parser.add_argument('--samples', type=int, default=100)
-        parser.add_argument('--elites', type=int, default=20)
-        parser.add_argument('--iterations', type=int, default=10)
+        parser.add_argument('--actor_type', type=str, default='CEM', choices=['CEM', 'RS'])
+        parser.add_argument('--horizon', type=int, default=25)
+        parser.add_argument('--samples', type=int, default=500)
+        parser.add_argument('--elites', type=int, default=50)
+        parser.add_argument('--iterations', type=int, default=5)
         parser.add_argument('--save_plan', type=lambda x: [False, True][int(x)], default=True)
         parser.add_argument('--data_collection_per_epoch', type=int, default=100)
         parser.add_argument('--train_steps_per_epoch', type=int, default=100)
@@ -39,7 +40,7 @@ class PETS:
 
         parser.add_argument('--hidden_feature', type=int, default=64)
         parser.add_argument('--hidden_layers', type=int, default=2)
-        parser.add_argument('--num_ensemble', type=int, default=4)
+        parser.add_argument('--num_ensemble', type=int, default=5)
         
         args = parser.parse_args()
         
@@ -61,9 +62,12 @@ class PETS:
                                              ensemble_size=self.config['num_ensemble'],
                                              with_reward=True)
 
-        actor = CEMActor(self.transition, self.env.action_space, 
-                         self.config['horizon'], self.config['samples'],
-                         self.config['elites'], self.config['iterations'], self.config['save_plan'])
+        if self.config['actor_type'] == 'CEM':
+            actor = CEMActor(self.transition, self.env.action_space, 
+                             self.config['horizon'], self.config['samples'],
+                             self.config['elites'], self.config['iterations'], self.config['save_plan'])
+        else:
+            actor = RandomShootingActor(self.transition, self.env.action_space, self.config['horizon'], self.config['samples'])
 
         self.buffer = ray.remote(ReplayBuffer).remote(self.config['buffer_size'])
         self.collector = CollectorServer.remote(self.config, RandomActor(self.env.action_space), self.buffer, self.config['num_collectors'], self.gpu_per_worker)

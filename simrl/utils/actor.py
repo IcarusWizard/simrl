@@ -117,10 +117,10 @@ class RandomShootingActor(Actor):
         for t in range(self.horizon):
             output_dist = self.transition(state, actions[t])
             output = output_dist.sample()
+            total_reward += output[..., -1].mean(dim=0) # use mean as reward
             model_index = np.random.randint(0, output.shape[0], self.samples)
             output = output[model_index, np.arange(self.samples)]
             state = output[..., :-1]
-            total_reward += output[..., -1]
 
         max_index = torch.argmax(total_reward)
         action = actions[0, max_index]
@@ -158,40 +158,51 @@ class CEMActor(Actor):
         dtype = param.dtype
         init_state = torch.as_tensor(state, dtype=dtype, device=device).unsqueeze(0).repeat(self.samples, 1)
 
+        # initialize action distribution
+        if self.plan_dist is None:
+            if self.continuous:
+                action_dist = DiagnalNormal(
+                    torch.as_tensor((self.action_space.low + self.action_space.high) / 2).to(param).unsqueeze(0).repeat(self.horizon, 1), 
+                    torch.as_tensor((self.action_space.high - self.action_space.low) / 16).to(param).unsqueeze(0).repeat(self.horizon, 1)
+                )
+            else:
+                action_dist = Onehot(probs=torch.ones(self.horizon, self.action_space.shape[0], dtype=dtype, device=device) / self.action_space.shape[0])
+        else:
+            action_dist = self.plan_dist
+
         for i in range(self.iterations):
             state = deepcopy(init_state)
-            if i == 0: 
-                if self.plan_dist is None: # initialize with uniform samples
-                    actions = torch.as_tensor(np.stack([self.action_space.sample() for _ in range(self.horizon * self.samples)]), dtype=dtype, device=device)
-                    actions = actions.view(self.horizon, self.samples, actions.shape[-1])
-                else:
-                    last_action = torch.as_tensor(np.stack([self.action_space.sample() for _ in range(self.samples)]), dtype=dtype, device=device).unsqueeze(dim=0)
-                    actions = torch.cat([self.plan_dist.sample((self.samples,)).permute(1, 0, 2).contiguous(), last_action], dim=0)
-            else:
-                actions = action_dist.sample((self.samples,)).permute(1, 0, 2).contiguous()
+
+            actions = action_dist.sample((self.samples,)).permute(1, 0, 2).contiguous()
 
             total_reward = 0
             for t in range(self.horizon):
                 output_dist = self.transition(state, actions[t])
                 output = output_dist.sample()
+                total_reward += output[..., -1].mean(dim=0) # use mean as reward
                 model_index = np.random.randint(0, output.shape[0], self.samples)
                 output = output[model_index, np.arange(self.samples)]
                 state = output[..., :-1]
-                total_reward += output[..., -1]
 
             elite_index = torch.argsort(total_reward)[-self.elites:]
             actions = actions[:, elite_index]
 
             if self.continuous:
-                action_dist = DiagnalNormal(actions.mean(dim=1), actions.std(dim=1))
+                # TODO: use TruncatedNormal
+                action_dist = DiagnalNormal(actions.mean(dim=1), actions.std(dim=1) + 1e-6)
             else:
                 action_dist = Onehot(probs=actions.mean(dim=1))
 
         if self.save_plan:
             if self.continuous:
-                self.plan_dist = DiagnalNormal(action_dist.mode[1:], action_dist.std[1:] + 1e-4)
+                next_mean = torch.as_tensor((self.action_space.low + self.action_space.high) / 2).to(param).unsqueeze(0)
+                self.plan_dist = DiagnalNormal(
+                    torch.cat([action_dist.mode[1:], next_mean], dim=0), 
+                    torch.as_tensor((self.action_space.high - self.action_space.low) / 16).to(param).unsqueeze(0).repeat(self.horizon, 1)
+                )
             else:
-                self.plan_dist = Onehot(probs=action_dist.probs[1:])
+                next_prob = torch.ones(1, self.action_space.shape[0], dtype=dtype, device=device) / self.action_space.shape[0]
+                self.plan_dist = Onehot(probs=torch.cat([action_dist.probs[1:], next_prob], dim=0))
 
         action = actions[0, -1]
         action = action.cpu().numpy()
