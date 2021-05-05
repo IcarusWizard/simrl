@@ -52,7 +52,7 @@ class PETS:
         self.state_dim = self.env.observation_space.shape[0]
         self.action_dim = self.env.action_space.shape[0]
         self.device = self.config['device']
-        self.gpu_per_worker = torch.cuda.device_count() / (self.config['num_collectors'] + 1)
+        self.gpu_per_worker = torch.cuda.device_count() / self.config['num_collectors']
 
         self.transition = EnsembleTransition(obs_dim=self.state_dim,
                                              action_dim=self.action_dim,
@@ -69,7 +69,7 @@ class PETS:
         self.collector = CollectorServer.remote(self.config, RandomActor(self.env.action_space), self.buffer, self.config['num_collectors'], self.gpu_per_worker)
         ray.get(self.collector.collect_steps.remote(self.config['initial_samples'], self.transition.get_weights()))
         ray.get(self.collector.set_actor.remote(deepcopy(actor)))
-        self.logger = Logger.options(num_gpus=self.gpu_per_worker).remote(config, deepcopy(actor), 'pets')
+        self.logger = Logger.remote(config, deepcopy(actor), 'pets')
 
         self.transition = self.transition.to(self.device)
         self.optimizor = torch.optim.Adam(self.transition.parameters(), lr=config['lr'])
