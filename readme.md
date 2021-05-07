@@ -25,5 +25,6 @@ python -m simrl.algo.<type>.<name> --env <env_name>
     - SAC
 
 ## Supported Environments
-Currently, we only support classical gym environments with flatten states. 
+The default installation only supports classical gym environments with flatten states.
+You can enable more supports with `pip install -e .[env]`. Currently, `pybullet` is supported.  
 We are planning to add support for more diverse environments and POMDP environments with visual inputs. 

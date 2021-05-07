@@ -1,7 +1,13 @@
 import os
 import gym
 import random
+import warnings
 import numpy as np
+
+try:
+    import pybullet_envs
+except:
+    warnings.warn('pybullet is not installed!')
 
 def make_env(config) -> gym.Env:
     env_name = config['env']

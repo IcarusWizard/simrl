@@ -23,7 +23,6 @@ setup(
         "tensorboard",
         "ray",
         "gym",
-        "gym[box2d]",
         "numpy",
         "matplotlib",
         "tqdm",
@@ -32,4 +31,7 @@ setup(
         "opencv-python",
         "moviepy",
     ],
+    extras_require={
+        'env' : ['gym[box2d]', 'pybullet']
+    }
 )
