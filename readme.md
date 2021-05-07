@@ -18,6 +18,7 @@ python -m simrl.algo.<type>.<name> --env <env_name>
 ## Supported Algorithems
 - Model-based
     - PETS
+    - MBPO
 - Model-free
     - TRPO
     - PPO
