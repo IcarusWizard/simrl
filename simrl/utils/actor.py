@@ -134,7 +134,6 @@ class RandomShootingActor(Actor):
     def to(self, device : str):
         self.transition = self.transition.to(device)
 
-
 class CEMActor(Actor):
     ''' Actor for random shooting with CEM iterations '''
     def __init__(self, transition, action_space, horizon, samples, elites, iterations, save_plan=True) -> None:

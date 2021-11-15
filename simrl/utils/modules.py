@@ -202,14 +202,15 @@ class ContinuousActor(ShareModule):
                  hidden_layers=2,
                  norm=None,
                  hidden_activation='leakyrelu',
+                 conditioned_std=False,
                  *args, **kwargs):
         super().__init__()
         self.state_dim = state_dim
         self.action_dim = action_dim
 
         self.dist_net = torch.nn.Sequential(
-            MLP(state_dim, 2 * action_dim, hidden_features, hidden_layers, norm, hidden_activation),
-            DistributionWrapper(distribution_type='normal', dim=action_dim)
+            MLP(state_dim, action_dim * (2 if conditioned_std else 1), hidden_features, hidden_layers, norm, hidden_activation),
+            DistributionWrapper(distribution_type='normal', dim=action_dim, conditioned_std=conditioned_std)
         )
 
     def forward(self, state):

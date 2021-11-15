@@ -7,12 +7,14 @@ class AttributeDict(dict):
     __getattr__ = dict.__getitem__
     __setattr__ = dict.__setitem__
     
-def setup_seed(seed):
-    np.random.seed(seed)
+def setup_seed(seed=42):
     torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
     random.seed(seed)
+    torch.backends.cudnn.deterministic = True
 
-def compute_gae(reward, value, done, gamma=0.99, lam=0.95):
+def compute_gae(reward, value, done, gamma=0.99, lam=0.95, normalize_adv=True):
 
     returns = torch.zeros_like(reward)
     advantages = torch.zeros_like(reward)
@@ -26,7 +28,8 @@ def compute_gae(reward, value, done, gamma=0.99, lam=0.95):
         pre_value = value[t]
     returns = value + advantages
     
-    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-4)
+    if normalize_adv:
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-4)
 
     return advantages, returns
 
