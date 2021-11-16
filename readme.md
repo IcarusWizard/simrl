@@ -27,5 +27,8 @@ python -m simrl.algo.<type>.<name> --env <env_name>
 
 ## Supported Environments
 The default installation only supports classical gym environments with flatten states.
-You can enable more supports with `pip install -e .[env]`. Currently, `pybullet` is supported.  
+You can enable more supports with `pip install -e .[env]`, which will install `box2d` and `pybullet`. 
+
+We all support `dm_control`, please see their [repo](https://github.com/deepmind/dm_control) for instruction of installation. Please not that for test convenience, the default backend is set as `egl`.
+
 We are planning to add support for more diverse environments and POMDP environments with visual inputs. 
